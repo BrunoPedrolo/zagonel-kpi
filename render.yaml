@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: zagonel-kpi
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn app:app
+    envVars:
+      - key: API_KEY
+        value: zagonel2026
+    disk:
+      name: data
+      mountPath: /opt/render/project/src
+      sizeGB: 1
