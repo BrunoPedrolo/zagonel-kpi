@@ -109,7 +109,10 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
       <h1>KPI · Inspetores · Linha de Montagem Final</h1>
       <p>Zagonel · Performance por inspetor, produto e linha</p>
     </div>
-    <div class="last-update" id="last-update">Carregando...</div>
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+      <div class="last-update" id="last-update">Carregando...</div>
+      <a href="/upload-page" style="display:inline-flex;align-items:center;gap:6px;background:#00695C;color:#e0f2f1;border:none;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none;transition:background .15s" onmouseover="this.style.background='#00897B'" onmouseout="this.style.background='#00695C'">📤 Novo upload</a>
+    </div>
   </div>
 
   <div id="main-content">
