@@ -199,12 +199,17 @@ function showStatus(msg,type){const s=document.getElementById('status');s.textCo
 async function doUpload(){
   if(!selectedFile)return;
   document.getElementById('btn').disabled=true;
-  showStatus('⏳ Processando... aguarda alguns segundos.','loading');
+  showStatus('⏳ Acordando servidor... aguarda.','loading');
+  try{ await fetch('/data'); } catch(e){}
+  showStatus('⏳ Processando arquivo...','loading');
   const fd=new FormData();
   fd.append('file',selectedFile);
   try{
     const r=await fetch('/upload',{method:'POST',headers:{'X-API-Key':'zagonel2026'},body:fd});
-    const d=await r.json();
+    const text=await r.text();
+    let d;
+    try{ d=JSON.parse(text); }
+    catch(e){ showStatus('❌ Servidor ainda acordando — clica em Enviar novamente.','err'); document.getElementById('btn').disabled=false; return; }
     if(d.success){
       showStatus('✅ Dashboard atualizado! Dias: '+d.days.join(', '),'ok');
       setTimeout(()=>window.location.href='/',2000);
@@ -213,7 +218,7 @@ async function doUpload(){
       document.getElementById('btn').disabled=false;
     }
   }catch(e){
-    showStatus('❌ Erro de conexão: '+e.message,'err');
+    showStatus('❌ Timeout — tenta clicar em Enviar novamente.','err');
     document.getElementById('btn').disabled=false;
   }
 }
