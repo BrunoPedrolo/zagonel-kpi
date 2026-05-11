@@ -1,4 +1,4 @@
-import os, json
+import os, json, threading
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import pandas as pd
@@ -55,14 +55,11 @@ def process_xlsx(path, filter_date=None):
     df['_date'] = pd.to_datetime(df['Data inicial'], dayfirst=True).dt.date
     if filter_date:
         df = df[df['_date'] == datetime.date(*[int(x) for x in filter_date.split('-')])]
-
     insp = df[df['Item']=='Inspetor Responsável'][['Código da avaliação','Resposta']].rename(columns={'Resposta':'Inspetor'})
     insp['Inspetor'] = insp['Inspetor'].str.strip()
     insp['Inspetor'] = insp['Inspetor'].str.replace(r'^Outro.*','Yenire',regex=True)
     insp['Inspetor'] = insp['Inspetor'].str.replace('Yenire Marquez','Yenire',regex=False)
     insp['Inspetor'] = insp['Inspetor'].str.replace(r'^Andris$','Andris Antonio Rivero Romero',regex=True)
-    insp['Inspetor'] = insp['Inspetor'].str.replace('Thalia Steffens','Thalia Steffens',regex=False)
-
     linha = df[df['Item']=='Linha de Montagem'][['Código da avaliação','Resposta']].rename(columns={'Resposta':'Linha'})
     aprov = df[df['Item']=='Aprovação da Peça'].copy()
     aprov['Produto'] = aprov['Tipo de Unidade'].str.replace(r'\s*-\s*PZO$','',regex=True).str.strip()
@@ -70,7 +67,6 @@ def process_xlsx(path, filter_date=None):
     aprov = aprov.merge(linha, on='Código da avaliação', how='left')
     aprov['Linha'] = aprov['Linha'].fillna('')
     aprov['Produto_Linha'] = aprov.apply(lambda r: f"{r['Produto']} — {r['Linha']}" if r['Linha'] else r['Produto'], axis=1)
-
     by_pl = aprov.groupby(['Inspetor','Produto_Linha','Produto','Linha','Resposta']).size().unstack(fill_value=0).reset_index()
     if 'Sim' not in by_pl.columns: by_pl['Sim'] = 0
     if 'Não' not in by_pl.columns: by_pl['Não'] = 0
@@ -81,10 +77,8 @@ def process_xlsx(path, filter_date=None):
     return by_pl
 
 def build_result(days_data):
-    # days_data: dict of {label: df}
     result = {"inspetores": [], "totals_by_day": {}, "produtos": [], "days": list(days_data.keys())}
     all_inspetores = sorted(set(sum([list(df['Inspetor'].unique()) for df in days_data.values()], [])))
-
     for lbl, df in days_data.items():
         summary = df.groupby('Inspetor').agg(Total=('Total','sum'), Meta=('Meta','sum')).reset_index()
         summary['Pct'] = summary['Total'] / summary['Meta']
@@ -96,7 +90,6 @@ def build_result(days_data):
             "n_atingiu": int(((summary['Pct']>=0.85)&(summary['Pct']<0.95)).sum()),
             "n_nao": int((summary['Pct']<0.85).sum()),
         }
-
     for insp in all_inspetores:
         obj = {"nome": insp, "dias": {}}
         for lbl, df in days_data.items():
@@ -115,7 +108,6 @@ def build_result(days_data):
             else:
                 obj["dias"][lbl] = None
         result["inspetores"].append(obj)
-
     all_prods = sorted(set(sum([list(df['Produto'].unique()) for df in days_data.values()], [])))
     for prod in all_prods:
         obj = {"nome": prod, "dias": {}}
@@ -123,7 +115,6 @@ def build_result(days_data):
             r = df[df['Produto']==prod]
             obj["dias"][lbl] = int(r['Total'].sum()) if len(r) else None
         result["produtos"].append(obj)
-
     return result
 
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
@@ -134,57 +125,41 @@ def github_get_sha():
     try:
         import urllib.request
         url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
-        req = urllib.request.Request(url, headers={
-            'Authorization': f'token {GITHUB_TOKEN}',
-            'Accept': 'application/vnd.github.v3+json'
-        })
+        req = urllib.request.Request(url, headers={'Authorization': f'token {GITHUB_TOKEN}','Accept': 'application/vnd.github.v3+json'})
         with urllib.request.urlopen(req, timeout=10) as r:
             return json.loads(r.read())['sha']
-    except:
-        return None
+    except: return None
 
 def github_save(data):
-    if not GITHUB_TOKEN:
-        return
+    if not GITHUB_TOKEN: return
     try:
         import urllib.request, base64
         content = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
         sha = github_get_sha()
         payload = {"message": "Auto backup KPI data", "content": content}
-        if sha:
-            payload["sha"] = sha
+        if sha: payload["sha"] = sha
         url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
-        req = urllib.request.Request(url,
-            data=json.dumps(payload).encode(),
-            headers={
-                'Authorization': f'token {GITHUB_TOKEN}',
-                'Accept': 'application/vnd.github.v3+json',
-                'Content-Type': 'application/json'
-            }, method='PUT')
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+            headers={'Authorization': f'token {GITHUB_TOKEN}','Accept': 'application/vnd.github.v3+json','Content-Type': 'application/json'}, method='PUT')
         urllib.request.urlopen(req, timeout=15)
         print("GitHub backup OK")
-    except Exception as e:
-        print(f"GitHub backup failed: {e}")
+    except Exception as e: print(f"GitHub backup failed: {e}")
 
 def github_load():
     try:
         import urllib.request, base64
         url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
-        req = urllib.request.Request(url, headers={
-            'Authorization': f'token {GITHUB_TOKEN}',
-            'Accept': 'application/vnd.github.v3+json'
-        })
+        req = urllib.request.Request(url, headers={'Authorization': f'token {GITHUB_TOKEN}','Accept': 'application/vnd.github.v3+json'})
         with urllib.request.urlopen(req, timeout=10) as r:
             content = json.loads(r.read())['content']
             return json.loads(base64.b64decode(content).decode())
-    except:
-        return None
+    except: return None
 
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE) as f:
             return json.load(f)
-    print("Local data not found, loading from GitHub...")
+    print("Local not found, loading from GitHub...")
     data = github_load()
     if data:
         with open(DATA_FILE, 'w') as f:
@@ -194,13 +169,73 @@ def load_data():
 def save_data(data):
     with open(DATA_FILE, 'w') as f:
         json.dump(data, f, ensure_ascii=False)
-    import threading
     threading.Thread(target=github_save, args=(data,), daemon=True).start()
 
 @app.route('/')
 def index():
     with open('index.html') as f:
         return f.read()
+
+@app.route('/upload-page')
+def upload_page():
+    return '''<!DOCTYPE html>
+<html lang="pt-BR">
+<head><meta charset="UTF-8"><title>Upload - Zagonel KPI</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{background:#0f1117;color:#e8eaf0;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.box{background:#1a1d27;border:0.5px solid #2e3347;border-radius:16px;padding:40px;max-width:480px;width:100%;text-align:center}
+h1{font-size:20px;margin-bottom:8px}p{font-size:13px;color:#9ba3bf;margin-bottom:24px}
+input[type=file]{display:none}
+.ua{border:2px dashed #2e3347;border-radius:10px;padding:32px;cursor:pointer;margin-bottom:20px;transition:all .2s}
+.ua:hover,.ua.drag{border-color:#4db6ac;background:#0d2b27}
+.ul{font-size:14px;color:#9ba3bf}.ul span{color:#4db6ac;font-weight:600}
+button{background:#4db6ac;color:#0f1117;border:none;padding:12px 32px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;width:100%}
+button:hover{background:#26a69a}button:disabled{background:#2e3347;color:#6b7494;cursor:not-allowed}
+.st{margin-top:16px;font-size:13px;padding:10px;border-radius:8px;display:none}
+.st.ok{background:#0d2b27;color:#4db6ac;display:block}
+.st.err{background:#2b0d0d;color:#ef9a9a;display:block}
+.st.loading{background:#1a1d27;color:#9ba3bf;display:block}
+.fn{font-size:12px;color:#4db6ac;margin-bottom:12px}
+a{display:inline-block;margin-top:16px;font-size:12px;color:#9ba3bf;text-decoration:none}
+a:hover{color:#4db6ac}
+</style></head>
+<body><div class="box">
+<h1>Upload de Dados</h1>
+<p>Faz upload do arquivo .xlsx exportado do sistema para atualizar o dashboard</p>
+<div class="ua" id="da" onclick="document.getElementById('fi').click()">
+  <input type="file" id="fi" accept=".xlsx" onchange="hf(this.files[0])">
+  <div class="ul">Clica ou arrasta o arquivo <span>.xlsx</span> aqui</div>
+</div>
+<div class="fn" id="fn"></div>
+<button id="btn" onclick="go()" disabled>Enviar e atualizar dashboard</button>
+<div class="st" id="st"></div>
+<a href="/">← Ver dashboard</a>
+</div>
+<script>
+let f=null;
+const da=document.getElementById('da');
+da.addEventListener('dragover',e=>{e.preventDefault();da.classList.add('drag')});
+da.addEventListener('dragleave',()=>da.classList.remove('drag'));
+da.addEventListener('drop',e=>{e.preventDefault();da.classList.remove('drag');hf(e.dataTransfer.files[0])});
+function hf(x){if(!x||!x.name.endsWith('.xlsx')){ss('Apenas .xlsx aceito','err');return;}f=x;document.getElementById('fn').textContent='📎 '+x.name;document.getElementById('btn').disabled=false;}
+function ss(m,t){const s=document.getElementById('st');s.textContent=m;s.className='st '+t;}
+async function go(){
+  if(!f)return;
+  document.getElementById('btn').disabled=true;
+  ss('⏳ Acordando servidor...','loading');
+  try{await fetch('/data');}catch(e){}
+  ss('⏳ Processando arquivo...','loading');
+  const fd=new FormData();fd.append('file',f);
+  try{
+    const r=await fetch('/upload',{method:'POST',headers:{'X-API-Key':'zagonel2026'},body:fd});
+    const txt=await r.text();let d;
+    try{d=JSON.parse(txt);}catch(e){ss('❌ Servidor ainda acordando — clica em Enviar novamente.','err');document.getElementById('btn').disabled=false;return;}
+    if(d.success){ss('✅ Atualizado! Dias: '+d.days.join(', '),'ok');setTimeout(()=>window.location.href='/',2000);}
+    else{ss('❌ Erro: '+d.error,'err');document.getElementById('btn').disabled=false;}
+  }catch(e){ss('❌ Timeout — tenta novamente.','err');document.getElementById('btn').disabled=false;}
+}
+</script></div></body></html>'''
 
 @app.route('/data')
 def get_data():
@@ -214,27 +249,16 @@ def upload():
     API_KEY = os.environ.get('API_KEY', 'zagonel2026')
     if request.headers.get('X-API-Key') != API_KEY:
         return jsonify({"error": "Unauthorized"}), 401
-
     if 'file' not in request.files:
         return jsonify({"error": "Nenhum arquivo enviado"}), 400
-
     file = request.files['file']
     date_label = request.form.get('date_label')
-
     tmp_path = f'/tmp/upload_{file.filename}'
     file.save(tmp_path)
-
     try:
-        # Detect dates in file
         df_raw = pd.read_excel(tmp_path)
         df_raw['_date'] = pd.to_datetime(df_raw['Data inicial'], dayfirst=True).dt.date
         unique_dates = sorted(df_raw['_date'].unique())
-
-        # Load existing data
-        existing = load_data() or {"inspetores": [], "totals_by_day": {}, "produtos": [], "days": []}
-        existing_days = existing.get("days", [])
-
-        # Process each date in the file
         new_days_data = {}
         for d in unique_dates:
             label = f"{d.day:02d}/{d.month:02d}"
@@ -243,38 +267,25 @@ def upload():
             df_day = process_xlsx(tmp_path, f"{d.year}-{d.month:02d}-{d.day:02d}")
             if len(df_day) > 0:
                 new_days_data[label] = df_day
-
         if not new_days_data:
             return jsonify({"error": "Nenhum dado encontrado"}), 400
-
-        # Merge with existing — rebuild only new days
-        # We need to rebuild full result with all days
-        # For simplicity: store per-day raw summary and rebuild
         stored = load_data() or {"_raw": {}}
         if "_raw" not in stored:
             stored["_raw"] = {}
-
         for label, df in new_days_data.items():
             stored["_raw"][label] = df.to_dict(orient='records')
-
-        # Rebuild full result from all stored days
         all_dfs = {}
         for label, records in stored["_raw"].items():
             all_dfs[label] = pd.DataFrame(records)
-
-        # Sort by date
         def sort_key(lbl):
             parts = lbl.split('/')
             return (int(parts[1]), int(parts[0]))
         all_dfs = dict(sorted(all_dfs.items(), key=lambda x: sort_key(x[0])))
-
         result = build_result(all_dfs)
         result["_raw"] = stored["_raw"]
         save_data(result)
-
         os.remove(tmp_path)
         return jsonify({"success": True, "days": list(all_dfs.keys()), "message": f"Processado: {list(new_days_data.keys())}"})
-
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
