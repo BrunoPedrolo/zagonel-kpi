@@ -126,104 +126,81 @@ def build_result(days_data):
 
     return result
 
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
+GITHUB_REPO  = os.environ.get('GITHUB_REPO', 'BrunoPedrolo/zagonel-kpi')
+GITHUB_FILE  = 'data.json'
+
+def github_get_sha():
+    try:
+        import urllib.request
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
+        req = urllib.request.Request(url, headers={
+            'Authorization': f'token {GITHUB_TOKEN}',
+            'Accept': 'application/vnd.github.v3+json'
+        })
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())['sha']
+    except:
+        return None
+
+def github_save(data):
+    if not GITHUB_TOKEN:
+        return
+    try:
+        import urllib.request, base64
+        content = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
+        sha = github_get_sha()
+        payload = {"message": "Auto backup KPI data", "content": content}
+        if sha:
+            payload["sha"] = sha
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
+        req = urllib.request.Request(url,
+            data=json.dumps(payload).encode(),
+            headers={
+                'Authorization': f'token {GITHUB_TOKEN}',
+                'Accept': 'application/vnd.github.v3+json',
+                'Content-Type': 'application/json'
+            }, method='PUT')
+        urllib.request.urlopen(req, timeout=15)
+        print("GitHub backup OK")
+    except Exception as e:
+        print(f"GitHub backup failed: {e}")
+
+def github_load():
+    try:
+        import urllib.request, base64
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
+        req = urllib.request.Request(url, headers={
+            'Authorization': f'token {GITHUB_TOKEN}',
+            'Accept': 'application/vnd.github.v3+json'
+        })
+        with urllib.request.urlopen(req, timeout=10) as r:
+            content = json.loads(r.read())['content']
+            return json.loads(base64.b64decode(content).decode())
+    except:
+        return None
+
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE) as f:
             return json.load(f)
-    return None
+    print("Local data not found, loading from GitHub...")
+    data = github_load()
+    if data:
+        with open(DATA_FILE, 'w') as f:
+            json.dump(data, f, ensure_ascii=False)
+    return data
 
 def save_data(data):
     with open(DATA_FILE, 'w') as f:
         json.dump(data, f, ensure_ascii=False)
+    import threading
+    threading.Thread(target=github_save, args=(data,), daemon=True).start()
 
 @app.route('/')
 def index():
     with open('index.html') as f:
         return f.read()
-
-@app.route('/upload-page')
-def upload_page():
-    return '''<!DOCTYPE html>
-<html lang="pt-BR">
-<head><meta charset="UTF-8"><title>Upload · Zagonel KPI</title>
-<style>
-*{box-sizing:border-box;margin:0;padding:0}
-body{background:#0f1117;color:#e8eaf0;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
-.box{background:#1a1d27;border:0.5px solid #2e3347;border-radius:16px;padding:40px;max-width:480px;width:100%;text-align:center}
-h1{font-size:20px;margin-bottom:8px}
-p{font-size:13px;color:#9ba3bf;margin-bottom:24px}
-input[type=file]{display:none}
-.upload-area{border:2px dashed #2e3347;border-radius:10px;padding:32px;cursor:pointer;transition:all .2s;margin-bottom:20px}
-.upload-area:hover{border-color:#4db6ac;background:#0d2b27}
-.upload-area.drag{border-color:#4db6ac;background:#0d2b27}
-.upload-label{font-size:14px;color:#9ba3bf}
-.upload-label span{color:#4db6ac;font-weight:600}
-button{background:#4db6ac;color:#0f1117;border:none;padding:12px 32px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;width:100%}
-button:hover{background:#26a69a}
-button:disabled{background:#2e3347;color:#6b7494;cursor:not-allowed}
-.status{margin-top:16px;font-size:13px;padding:10px;border-radius:8px;display:none}
-.status.ok{background:#0d2b27;color:#4db6ac;display:block}
-.status.err{background:#2b0d0d;color:#ef9a9a;display:block}
-.status.loading{background:#1a1d27;color:#9ba3bf;display:block}
-.filename{font-size:12px;color:#4db6ac;margin-bottom:12px}
-a.back{display:inline-block;margin-top:16px;font-size:12px;color:#9ba3bf;text-decoration:none}
-a.back:hover{color:#4db6ac}
-</style></head>
-<body>
-<div class="box">
-  <h1>📤 Upload de Dados</h1>
-  <p>Faz upload do arquivo .xlsx exportado do sistema para atualizar o dashboard</p>
-  <div class="upload-area" id="drop-area" onclick="document.getElementById('file-input').click()">
-    <input type="file" id="file-input" accept=".xlsx" onchange="handleFile(this.files[0])">
-    <div class="upload-label">Clica ou arrasta o arquivo <span>.xlsx</span> aqui</div>
-  </div>
-  <div class="filename" id="filename"></div>
-  <button id="btn" onclick="doUpload()" disabled>Enviar e atualizar dashboard</button>
-  <div class="status" id="status"></div>
-  <a class="back" href="/">← Ver dashboard</a>
-</div>
-<script>
-let selectedFile = null;
-const drop = document.getElementById('drop-area');
-drop.addEventListener('dragover', e=>{e.preventDefault();drop.classList.add('drag')});
-drop.addEventListener('dragleave', ()=>drop.classList.remove('drag'));
-drop.addEventListener('drop', e=>{e.preventDefault();drop.classList.remove('drag');handleFile(e.dataTransfer.files[0])});
-
-function handleFile(f){
-  if(!f||!f.name.endsWith('.xlsx')){showStatus('Apenas arquivos .xlsx são aceitos.','err');return;}
-  selectedFile=f;
-  document.getElementById('filename').textContent='📎 '+f.name;
-  document.getElementById('btn').disabled=false;
-}
-function showStatus(msg,type){const s=document.getElementById('status');s.textContent=msg;s.className='status '+type;}
-async function doUpload(){
-  if(!selectedFile)return;
-  document.getElementById('btn').disabled=true;
-  showStatus('⏳ Acordando servidor... aguarda.','loading');
-  try{ await fetch('/data'); } catch(e){}
-  showStatus('⏳ Processando arquivo...','loading');
-  const fd=new FormData();
-  fd.append('file',selectedFile);
-  try{
-    const r=await fetch('/upload',{method:'POST',headers:{'X-API-Key':'zagonel2026'},body:fd});
-    const text=await r.text();
-    let d;
-    try{ d=JSON.parse(text); }
-    catch(e){ showStatus('❌ Servidor ainda acordando — clica em Enviar novamente.','err'); document.getElementById('btn').disabled=false; return; }
-    if(d.success){
-      showStatus('✅ Dashboard atualizado! Dias: '+d.days.join(', '),'ok');
-      setTimeout(()=>window.location.href='/',2000);
-    } else {
-      showStatus('❌ Erro: '+d.error,'err');
-      document.getElementById('btn').disabled=false;
-    }
-  }catch(e){
-    showStatus('❌ Timeout — tenta clicar em Enviar novamente.','err');
-    document.getElementById('btn').disabled=false;
-  }
-}
-</script>
-</body></html>'''
 
 @app.route('/data')
 def get_data():
