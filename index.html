@@ -4,18 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>KPI · Inspetores · Zagonel</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
 :root{
   --bg:#0f1117;--bg2:#1a1d27;--bg3:#222535;--border:#2e3347;--border2:#3d4460;
   --text:#e8eaf0;--text2:#9ba3bf;--text3:#6b7494;
-  --green:#00897B;--green-bg:#0d2b27;--green-light:#e0f2f1;--green-dark:#004D40;
+  --green:#00897B;--green-bg:#0d2b27;
   --amber:#2E7D32;--amber-bg:#0d2b0f;
   --red:#c62828;--red-bg:#2b0d0d;
   --purple:#5c35a8;--purple-bg:#1a1030;
   --blue:#1565C0;--blue-bg:#0d1a30;
   --orange:#e65100;--orange-bg:#2b1a00;
-  --gold:#f9a825;
 }
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
 .dash{padding:20px 16px;max-width:1000px;margin:0 auto}
@@ -52,18 +52,16 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .card-header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:12px;gap:8px}
 .card-name{font-size:13px;font-weight:500;color:var(--text);line-height:1.3}
 .turno-tag{font-size:10px;font-weight:500;padding:2px 7px;border-radius:4px;margin-top:3px;display:inline-block}
-.t15{background:var(--purple-bg);color:#9575cd}
-.t05{background:var(--blue-bg);color:#64b5f6}
-.t07{background:var(--orange-bg);color:#ffb74d}
+.t15{background:var(--purple-bg);color:#9575cd}.t05{background:var(--blue-bg);color:#64b5f6}.t07{background:var(--orange-bg);color:#ffb74d}
 .badge{display:inline-block;font-size:10px;font-weight:600;padding:3px 9px;border-radius:5px;white-space:nowrap;flex-shrink:0}
 .bs{background:var(--green-bg);color:#4db6ac;border:0.5px solid var(--green)}
 .ba{background:var(--amber-bg);color:#81c784;border:0.5px solid var(--amber)}
 .bn{background:var(--red-bg);color:#ef9a9a;border:0.5px solid var(--red)}
 .babs{background:var(--bg3);color:var(--text3);border:0.5px solid var(--border)}
-.big-pct{font-size:32px;font-weight:600;line-height:1;margin-bottom:3px}
+.big-pct{font-size:30px;font-weight:600;line-height:1;margin-bottom:3px}
 .big-lbl{font-size:11px;color:var(--text3)}
 .prog-track{height:6px;background:var(--bg3);border-radius:3px;overflow:hidden;margin:10px 0 6px}
-.prog-fill{height:100%;border-radius:3px;transition:width .5s}
+.prog-fill{height:100%;border-radius:3px}
 .lines-block{margin-top:10px;border-top:0.5px solid var(--border);padding-top:10px}
 .line-item{display:flex;align-items:center;justify-content:space-between;margin-bottom:6px}
 .line-item:last-child{margin-bottom:0}
@@ -84,13 +82,14 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .comp-row{display:flex;align-items:center;gap:8px;margin-bottom:4px}
 .comp-bar-bg{flex:1;height:4px;background:var(--bg3);border-radius:2px;overflow:hidden}
 .comp-bar-fill{height:100%;border-radius:2px}
-.delta-pill{font-size:10px;padding:2px 7px;border-radius:4px;font-weight:600}
-.du{background:var(--green-bg);color:#4db6ac}
-.dd{background:var(--red-bg);color:#ef9a9a}
-.deq{background:var(--bg3);color:var(--text3)}
-.tabs{display:flex;border-bottom:0.5px solid var(--border);margin-bottom:16px}
-.tab{padding:8px 18px;font-size:13px;font-weight:500;cursor:pointer;color:var(--text3);border-bottom:2px solid transparent;transition:all .15s}
-.tab.active{color:var(--text);border-bottom-color:var(--text)}
+.delta-pill{font-size:10px;padding:2px 6px;border-radius:4px;font-weight:600}
+.du{background:var(--amber-bg);color:#81c784}.dd{background:var(--red-bg);color:#ef9a9a}.deq{background:var(--bg3);color:var(--text3)}
+.main-tabs{display:flex;border-bottom:0.5px solid var(--border);margin-bottom:20px}
+.main-tab{padding:9px 20px;font-size:13px;font-weight:500;cursor:pointer;color:var(--text3);border-bottom:2px solid transparent;transition:all .15s}
+.main-tab.active{color:var(--text);border-bottom-color:var(--text)}
+.sub-tabs{display:flex;border-bottom:0.5px solid var(--border);margin-bottom:16px}
+.sub-tab{padding:8px 18px;font-size:13px;font-weight:500;cursor:pointer;color:var(--text3);border-bottom:2px solid transparent;transition:all .15s}
+.sub-tab.active{color:var(--text);border-bottom-color:var(--text)}
 .panel{display:none}.panel.active{display:block}
 .prod-table{width:100%;border-collapse:collapse;font-size:13px}
 .prod-table th{text-align:left;font-size:10px;font-weight:500;color:var(--text3);padding:7px 10px;border-bottom:0.5px solid var(--border);text-transform:uppercase;letter-spacing:.05em}
@@ -99,7 +98,45 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .prod-table tr:first-child td{border-top:none}
 .empty{text-align:center;padding:40px 0;color:var(--text3);font-size:13px;grid-column:1/-1}
 .loading{text-align:center;padding:60px;color:var(--text3);font-size:14px}
-@media(max-width:580px){.kpi-grid{grid-template-columns:repeat(2,1fr)}.cards-grid{grid-template-columns:1fr}}
+/* Relatório individual */
+.rel-controls{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;margin-bottom:24px;padding:16px;background:var(--bg2);border-radius:10px;border:0.5px solid var(--border)}
+.rel-field{display:flex;flex-direction:column;gap:6px}
+.rel-label{font-size:11px;color:var(--text3);text-transform:uppercase;letter-spacing:.05em}
+.rel-select{background:var(--bg3);color:var(--text);border:0.5px solid var(--border);border-radius:6px;padding:7px 12px;font-size:13px;cursor:pointer;min-width:180px}
+.rel-select:focus{outline:none;border-color:var(--border2)}
+.btn-gerar{background:#4db6ac;color:#0f1117;border:none;padding:8px 20px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;transition:background .15s;align-self:flex-end}
+.btn-gerar:hover{background:#26a69a}
+.btn-img{background:var(--bg2);color:#4db6ac;border:0.5px solid var(--green);padding:8px 18px;border-radius:7px;font-size:13px;font-weight:600;cursor:pointer;transition:all .15s}
+.btn-img:hover{background:var(--green-bg)}
+/* Cartão de relatório */
+#rel-card{background:#111827;border-radius:14px;padding:28px;max-width:700px}
+.rel-header{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:16px;border-bottom:1px solid #2e3347;margin-bottom:18px}
+.rel-avatar{width:48px;height:48px;border-radius:50%;background:#0d2b27;display:flex;align-items:center;justify-content:center;font-size:16px;font-weight:600;color:#4db6ac;flex-shrink:0}
+.rel-name{font-size:17px;font-weight:600;color:#e8eaf0}
+.rel-sub{font-size:12px;color:#6b7494;margin-top:3px}
+.rel-period{text-align:right;font-size:12px;color:#6b7494}
+.rel-period strong{display:block;font-size:14px;color:#e8eaf0;font-weight:500}
+.rel-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px}
+.rel-kpi{background:#1a1d27;border-radius:8px;padding:10px 12px}
+.rel-kpi-lbl{font-size:10px;color:#6b7494;text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px}
+.rel-kpi-val{font-size:20px;font-weight:600;color:#e8eaf0}
+.rel-kpi-sub{font-size:10px;color:#6b7494;margin-top:2px}
+.rel-section{font-size:10px;font-weight:500;color:#6b7494;text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px}
+.rel-days{display:grid;gap:8px;margin-bottom:20px}
+.rel-day{border:0.5px solid #2e3347;border-radius:8px;padding:10px 14px;display:flex;align-items:center;gap:12px}
+.rel-day-date{font-size:12px;font-weight:500;color:#9ba3bf;width:42px;flex-shrink:0}
+.rel-day-bar-wrap{flex:1;display:flex;align-items:center;gap:8px}
+.rel-day-bar-bg{flex:1;height:5px;background:#222535;border-radius:3px;overflow:hidden}
+.rel-day-bar-fill{height:100%;border-radius:3px}
+.rel-day-pct{font-size:12px;font-weight:600;min-width:40px;text-align:right}
+.rel-day-real{font-size:11px;color:#6b7494;min-width:60px;text-align:right}
+.rel-lines-table{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:20px}
+.rel-lines-table th{text-align:left;padding:6px 10px;font-size:10px;font-weight:500;color:#6b7494;text-transform:uppercase;border-bottom:0.5px solid #2e3347}
+.rel-lines-table th.r,.rel-lines-table td.r{text-align:right}
+.rel-lines-table td{padding:8px 10px;border-top:0.5px solid #1a1d27;color:#9ba3bf}
+.rel-footer{display:flex;justify-content:space-between;align-items:center;padding-top:14px;border-top:0.5px solid #2e3347;font-size:10px;color:#6b7494}
+.rel-legend{display:flex;gap:14px}
+@media(max-width:580px){.kpi-grid{grid-template-columns:repeat(2,1fr)}.cards-grid{grid-template-columns:1fr}.rel-kpis{grid-template-columns:repeat(2,1fr)}}
 </style>
 </head>
 <body>
@@ -111,24 +148,19 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
     </div>
     <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
       <div class="last-update" id="last-update">Carregando...</div>
-      <a href="/upload-page" style="display:inline-flex;align-items:center;gap:6px;background:#00695C;color:#e0f2f1;border:none;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none;transition:background .15s" onmouseover="this.style.background='#00897B'" onmouseout="this.style.background='#00695C'">📤 Novo upload</a>
+      <a href="/upload-page" style="display:inline-flex;align-items:center;gap:6px;background:#00695C;color:#e0f2f1;border:none;padding:7px 14px;border-radius:8px;font-size:12px;font-weight:600;text-decoration:none">📤 Novo upload</a>
     </div>
   </div>
 
-  <div id="main-content">
-    <div class="loading">⏳ Carregando dados...</div>
-  </div>
+  <div id="main-content"><div class="loading">⏳ Carregando dados...</div></div>
 </div>
 
 <script>
-let D = null;
-let day, tab='inspetores', selInsp=new Set(), selTurno=new Set();
-
+let D=null, day, tab='inspetores', subTab='inspetores', selInsp=new Set(), selTurno=new Set();
 const TURNOS={'15h00':['Ketlin','Iliane','Andris','Yenire','Marta'],'05h20':['Yorjelis','Thalia','Caroline','Andrea','Eliandra'],'07h12':['Alicia','Marianny','Ana Paula','Karen']};
 const TURNO_COR={'15h00':'t15','05h20':'t05','07h12':'t07'};
 const TURNO_CHIP={'15h00':'t-15','05h20':'t-05','07h12':'t-07'};
 function getTurno(n){for(const[t,a]of Object.entries(TURNOS)){if(a.some(x=>n.includes(x)))return t;}return'—';}
-
 const bc=s=>s==='SUPEROU'?'#4db6ac':s==='ATINGIU'?'#81c784':'#ef9a9a';
 const bCls=s=>s==='SUPEROU'?'bs':s==='ATINGIU'?'ba':s==='NAO_ATINGIU'?'bn':'babs';
 const bTxt=s=>s==='SUPEROU'?'▲ Superou':s==='ATINGIU'?'● Atingiu':s==='NAO_ATINGIU'?'✖ Não atingiu':'Ausente';
@@ -136,19 +168,38 @@ const w=v=>Math.min(v,130)/1.3;
 
 async function loadData(){
   try{
-    const r = await fetch('/data');
-    if(!r.ok) throw new Error('Sem dados');
-    D = await r.json();
-    day = D.days[D.days.length-1]; // default: último dia
-    document.getElementById('last-update').textContent = `Último upload: ${D.days[D.days.length-1]}`;
+    const r=await fetch('/data');
+    if(!r.ok)throw new Error();
+    D=await r.json();
+    day=D.days[D.days.length-1];
+    document.getElementById('last-update').textContent=`Último upload: ${D.days[D.days.length-1]}`;
     buildUI();
-  } catch(e){
-    document.getElementById('main-content').innerHTML = '<div class="loading">⚠️ Sem dados ainda. Faz upload do primeiro arquivo.</div>';
+  }catch(e){
+    document.getElementById('main-content').innerHTML='<div class="loading">⚠️ Sem dados ainda. Faz upload do primeiro arquivo.</div>';
   }
 }
 
 function buildUI(){
-  document.getElementById('main-content').innerHTML = `
+  document.getElementById('main-content').innerHTML=`
+    <div class="main-tabs">
+      <div class="main-tab active" onclick="setMainTab('dashboard')">Dashboard</div>
+      <div class="main-tab" onclick="setMainTab('relatorio')">📋 Relatório Individual</div>
+    </div>
+    <div id="panel-dashboard" class="panel active"></div>
+    <div id="panel-relatorio" class="panel"></div>
+  `;
+  buildDashboard();
+  buildRelatorio();
+}
+
+function setMainTab(t){
+  document.querySelectorAll('.main-tab').forEach((b,i)=>b.classList.toggle('active',['dashboard','relatorio'][i]===t));
+  document.querySelectorAll('#panel-dashboard,#panel-relatorio').forEach((p,i)=>p.classList.toggle('active',['dashboard','relatorio'][i]===t));
+}
+
+/* ── DASHBOARD ── */
+function buildDashboard(){
+  document.getElementById('panel-dashboard').innerHTML=`
     <div class="controls">
       <div class="ctrl-row">
         <div class="toggle" id="day-toggle"></div>
@@ -162,179 +213,268 @@ function buildUI(){
       </div>
     </div>
     <div id="kpi-area" class="kpi-grid"></div>
-    <div class="tabs">
-      <div class="tab active" onclick="setTab('inspetores')">Inspetores</div>
-      <div class="tab" onclick="setTab('produtos')">Produtos</div>
+    <div class="sub-tabs">
+      <div class="sub-tab active" onclick="setSubTab('inspetores')">Inspetores</div>
+      <div class="sub-tab" onclick="setSubTab('produtos')">Produtos</div>
     </div>
     <div id="panel-inspetores" class="panel active"></div>
     <div id="panel-produtos" class="panel"></div>
   `;
-  buildDayToggle();
-  buildChips();
-  render();
-}
-
-function buildDayToggle(){
-  document.getElementById('day-toggle').innerHTML =
-    D.days.map(d=>`<button class="tbtn${d===day?' active':''}" data-d="${d}" onclick="setDay('${d}')">${d}</button>`).join('')+
-    `<button class="tbtn${day==='comp'?' active':''}" data-d="comp" onclick="setDay('comp')">Comparativo</button>`;
-}
-
-function buildChips(){
-  document.getElementById('turno-chips').innerHTML =
-    `<div class="chip sel-all" id="ta" onclick="clearTurno()">Todos os turnos</div>`+
-    Object.keys(TURNOS).map(t=>`<div class="chip" id="tc-${t.replace(':','')}" onclick="toggleTurno('${t}')">${t}</div>`).join('');
-  document.getElementById('insp-chips').innerHTML =
-    `<div class="chip sel-all" id="ca" onclick="clearInsp()">Todos</div>`+
-    D.inspetores.map((x,i)=>`<div class="chip" id="c${i}" onclick="toggleInsp(${i})">${x.nome.split(' ')[0]}</div>`).join('');
+  buildDayToggle();buildChips();render();
 }
 
 function setDay(d){day=d;document.querySelectorAll('.tbtn').forEach(b=>b.classList.toggle('active',b.dataset.d===d));render();}
-function setTab(t){tab=t;document.querySelectorAll('.tab').forEach((b,i)=>b.classList.toggle('active',['inspetores','produtos'][i]===t));document.querySelectorAll('.panel').forEach((p,i)=>p.classList.toggle('active',['panel-inspetores','panel-produtos'][i]==='panel-'+t));render();}
+function setSubTab(t){subTab=t;document.querySelectorAll('.sub-tab').forEach((b,i)=>b.classList.toggle('active',['inspetores','produtos'][i]===t));document.querySelectorAll('#panel-inspetores,#panel-produtos').forEach((p,i)=>p.classList.toggle('active',['inspetores','produtos'][i]===t));render();}
 
+function buildDayToggle(){
+  document.getElementById('day-toggle').innerHTML=
+    D.days.map((d,i)=>`<button class="tbtn${i===D.days.length-1?' active':''}" data-d="${d}" onclick="setDay('${d}')">${d}</button>`).join('')+
+    `<button class="tbtn" data-d="comp" onclick="setDay('comp')">Comparativo</button>`;
+}
+function buildChips(){
+  document.getElementById('turno-chips').innerHTML=
+    `<div class="chip sel-all" id="ta" onclick="clearTurno()">Todos os turnos</div>`+
+    Object.keys(TURNOS).map(t=>`<div class="chip" id="tc-${t.replace(':','')}" onclick="toggleTurno('${t}')">${t}</div>`).join('');
+  document.getElementById('insp-chips').innerHTML=
+    `<div class="chip sel-all" id="ca" onclick="clearInsp()">Todos</div>`+
+    D.inspetores.map((x,i)=>`<div class="chip" id="c${i}" onclick="toggleInsp(${i})">${x.nome.split(' ')[0]}</div>`).join('');
+}
 function clearTurno(){selTurno.clear();document.querySelectorAll('[id^="tc-"]').forEach(c=>c.className='chip');document.getElementById('ta').className='chip sel-all';render();}
-function toggleTurno(t){
-  document.getElementById('ta').className='chip';
-  const id='tc-'+t.replace(':','');
-  if(selTurno.has(t)){selTurno.delete(t);document.getElementById(id).className='chip';}
-  else{selTurno.add(t);document.getElementById(id).className='chip '+TURNO_CHIP[t];}
-  if(!selTurno.size)document.getElementById('ta').className='chip sel-all';
-  render();
-}
+function toggleTurno(t){document.getElementById('ta').className='chip';const id='tc-'+t.replace(':','');if(selTurno.has(t)){selTurno.delete(t);document.getElementById(id).className='chip';}else{selTurno.add(t);document.getElementById(id).className='chip '+TURNO_CHIP[t];}if(!selTurno.size)document.getElementById('ta').className='chip sel-all';render();}
 function clearInsp(){selInsp.clear();document.querySelectorAll('[id^="c"]:not([id^="ca"]):not([id^="tc"])').forEach(c=>c.className='chip');document.getElementById('ca').className='chip sel-all';render();}
-function toggleInsp(i){
-  document.getElementById('ca').className='chip';
-  if(selInsp.has(i)){selInsp.delete(i);document.getElementById('c'+i).className='chip';}
-  else{selInsp.add(i);const ref=D.inspetores[i].dias[D.days[0]]||D.inspetores[i].dias[D.days[1]];const cls=ref?(ref.status==='SUPEROU'?'sel-s':ref.status==='ATINGIU'?'sel-a':'sel-n'):'';document.getElementById('c'+i).className='chip '+cls;}
-  if(!selInsp.size)document.getElementById('ca').className='chip sel-all';
-  render();
-}
-
+function toggleInsp(i){document.getElementById('ca').className='chip';if(selInsp.has(i)){selInsp.delete(i);document.getElementById('c'+i).className='chip';}else{selInsp.add(i);const ref=D.inspetores[i].dias[D.days[0]]||D.inspetores[i].dias[D.days[1]];const cls=ref?(ref.status==='SUPEROU'?'sel-s':ref.status==='ATINGIU'?'sel-a':'sel-n'):'';document.getElementById('c'+i).className='chip '+cls;}if(!selInsp.size)document.getElementById('ca').className='chip sel-all';render();}
 const filtered=()=>D.inspetores.filter((_,i)=>(selTurno.size===0||selTurno.has(getTurno(D.inspetores[i].nome)))&&(selInsp.size===0||selInsp.has(i)));
-
-function calcTotals(group,d){
-  const pr=group.filter(x=>x.dias[d]);
-  const tot=pr.reduce((a,x)=>a+x.dias[d].total,0);
-  const met=pr.reduce((a,x)=>a+x.dias[d].meta,0);
-  const pct=met?Math.round(tot/met*1000)/10:0;
-  return{tot,met,pct,ns:pr.filter(x=>x.dias[d].status==='SUPEROU').length,na:pr.filter(x=>x.dias[d].status==='ATINGIU').length,nn:pr.filter(x=>x.dias[d].status==='NAO_ATINGIU').length,n:pr.length};
-}
-
-function render(){renderKPIs();if(tab==='inspetores')renderCards();else renderProdutos();}
+function calcTotals(group,d){const pr=group.filter(x=>x.dias[d]);const tot=pr.reduce((a,x)=>a+x.dias[d].total,0);const met=pr.reduce((a,x)=>a+x.dias[d].meta,0);const pct=met?Math.round(tot/met*1000)/10:0;return{tot,met,pct,ns:pr.filter(x=>x.dias[d].status==='SUPEROU').length,na:pr.filter(x=>x.dias[d].status==='ATINGIU').length,nn:pr.filter(x=>x.dias[d].status==='NAO_ATINGIU').length,n:pr.length};}
+function render(){renderKPIs();if(subTab==='inspetores')renderCards();else renderProdutos();}
 
 function renderKPIs(){
-  const el=document.getElementById('kpi-area');
-  const f=filtered();
-  const isTodos=selInsp.size===0&&selTurno.size===0;
+  const el=document.getElementById('kpi-area');if(!el)return;
+  const f=filtered();const isTodos=selInsp.size===0&&selTurno.size===0;
   const fn=isTodos?'':` <div class="filter-note">${f.length} colaborador${f.length!==1?'es':''} selecionado${f.length!==1?'s':''}</div>`;
-
   if(day==='comp'){
     const tots=D.days.map(d=>calcTotals(f,d));
-    el.innerHTML=`
-      ${D.days.map((d,i)=>`<div class="kpi"><div class="kpi-lbl">Peças ${d}</div><div class="kpi-val" style="color:${tots[i].pct>=95?'#4db6ac':tots[i].pct>=85?'#81c784':'#ffb74d'}">${tots[i].tot.toLocaleString('pt-BR')}</div><div class="kpi-sub">${tots[i].pct}% da meta</div>${fn}</div>`).join('')}
-      <div class="kpi"><div class="kpi-lbl">Status por dia</div>
-        <div style="display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:11px">
-          ${D.days.map((d,i)=>`<div style="display:flex;justify-content:space-between"><span style="color:var(--text3)">${d}</span><span><span style="color:#4db6ac">▲${tots[i].ns}</span> <span style="color:#81c784">●${tots[i].na}</span> <span style="color:#ef9a9a">✖${tots[i].nn}</span></span></div>`).join('')}
-        </div>${fn}
-      </div>`;
+    el.innerHTML=`${D.days.map((d,i)=>`<div class="kpi"><div class="kpi-lbl">Peças ${d}</div><div class="kpi-val" style="color:${tots[i].pct>=95?'#4db6ac':tots[i].pct>=85?'#81c784':'#ffb74d'}">${tots[i].tot.toLocaleString('pt-BR')}</div><div class="kpi-sub">${tots[i].pct}% da meta</div>${fn}</div>`).join('')}
+    <div class="kpi"><div class="kpi-lbl">Status por dia</div><div style="display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:11px">${D.days.map((d,i)=>`<div style="display:flex;justify-content:space-between"><span style="color:var(--text3)">${d}</span><span><span style="color:#4db6ac">▲${tots[i].ns}</span> <span style="color:#81c784">●${tots[i].na}</span> <span style="color:#ef9a9a">✖${tots[i].nn}</span></span></div>`).join('')}</div>${fn}</div>`;
     return;
   }
   const t=calcTotals(f,day);
-  el.innerHTML=`
-    <div class="kpi"><div class="kpi-lbl">Peças testadas</div><div class="kpi-val">${t.tot.toLocaleString('pt-BR')}</div><div class="kpi-sub">Meta: ${t.met.toLocaleString('pt-BR')}</div>${fn}</div>
-    <div class="kpi"><div class="kpi-lbl">% da meta</div><div class="kpi-val" style="color:${t.pct>=95?'#4db6ac':t.pct>=85?'#81c784':'#ffb74d'}">${t.pct}%</div><div class="kpi-sub">${t.n} inspetor${t.n!==1?'es':''} presentes</div></div>
-    <div class="kpi"><div class="kpi-lbl">Status</div>
-      <div style="display:flex;flex-direction:column;gap:4px;margin-top:6px">
-        <span class="badge bs">▲ ${t.ns} superou</span>
-        <span class="badge ba">● ${t.na} atingiu</span>
-        <span class="badge bn">✖ ${t.nn} abaixo</span>
-      </div>
-    </div>
-    <div class="kpi"><div class="kpi-lbl">Atingimento</div>
-      <div style="margin-top:8px">
-        <div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden">
-          <div style="height:100%;width:${Math.min(t.pct,100)}%;background:${t.pct>=95?'#4db6ac':t.pct>=85?'#81c784':'#ffb74d'};border-radius:4px"></div>
-        </div>
-        <div style="font-size:11px;color:var(--text3);margin-top:5px">${t.tot.toLocaleString('pt-BR')} de ${t.met.toLocaleString('pt-BR')} peças</div>
-      </div>
-    </div>`;
+  el.innerHTML=`<div class="kpi"><div class="kpi-lbl">Peças testadas</div><div class="kpi-val">${t.tot.toLocaleString('pt-BR')}</div><div class="kpi-sub">Meta: ${t.met.toLocaleString('pt-BR')}</div>${fn}</div>
+  <div class="kpi"><div class="kpi-lbl">% da meta</div><div class="kpi-val" style="color:${t.pct>=95?'#4db6ac':t.pct>=85?'#81c784':'#ffb74d'}">${t.pct}%</div><div class="kpi-sub">${t.n} inspetor${t.n!==1?'es':''} presentes</div></div>
+  <div class="kpi"><div class="kpi-lbl">Status</div><div style="display:flex;flex-direction:column;gap:3px;margin-top:6px"><span class="badge bs">▲ ${t.ns} superou</span><span class="badge ba">● ${t.na} atingiu</span><span class="badge bn">✖ ${t.nn} abaixo</span></div></div>
+  <div class="kpi"><div class="kpi-lbl">Atingimento</div><div style="margin-top:8px"><div style="height:8px;background:var(--bg3);border-radius:4px;overflow:hidden"><div style="height:100%;width:${Math.min(t.pct,100)}%;background:${t.pct>=95?'#4db6ac':t.pct>=85?'#81c784':'#ffb74d'};border-radius:4px"></div></div><div style="font-size:11px;color:var(--text3);margin-top:5px">${t.tot.toLocaleString('pt-BR')} de ${t.met.toLocaleString('pt-BR')} peças</div></div></div>`;
 }
 
-function linhasHtml(linhas){
-  return`<div class="lines-block">${linhas.map(l=>`
-    <div class="line-item">
-      <span class="line-name">${l.label}</span>
-      <div class="line-right">
-        <div class="mini-bar-bg"><div class="mini-bar-fill" style="width:${w(l.pct)}%;background:${bc(l.status)}"></div></div>
-        <span class="line-pct" style="color:${bc(l.status)}">${l.pct}%</span>
-        <span style="font-size:10px;color:var(--text3);min-width:24px;text-align:right">${l.total}</span>
-      </div>
-    </div>`).join('')}</div>`;
-}
+function linhasHtml(linhas){return`<div class="lines-block">${linhas.map(l=>`<div class="line-item"><span class="line-name">${l.label}</span><div class="line-right"><div class="mini-bar-bg"><div class="mini-bar-fill" style="width:${w(l.pct)}%;background:${bc(l.status)}"></div></div><span class="line-pct" style="color:${bc(l.status)}">${l.pct}%</span><span style="font-size:10px;color:var(--text3);min-width:24px;text-align:right">${l.total}</span></div></div>`).join('')}</div>`;}
 
 function renderCards(){
-  const el=document.getElementById('panel-inspetores');
+  const el=document.getElementById('panel-inspetores');if(!el)return;
   const f=filtered();
   if(!f.length){el.innerHTML=`<div class="cards-grid"><div class="empty">Nenhum colaborador encontrado.</div></div>`;return;}
   let h='<div class="cards-grid">';
   f.forEach(insp=>{
-    const turno=getTurno(insp.nome);
-    const tCls=TURNO_COR[turno]||'';
+    const turno=getTurno(insp.nome),tCls=TURNO_COR[turno]||'';
     if(day==='comp'){
       const dAll=D.days.map(d=>insp.dias[d]);
       const dFirst=dAll.find(Boolean),dLast=[...dAll].reverse().find(Boolean);
       const delta=dFirst&&dLast&&dFirst!==dLast?+(dLast.pct-dFirst.pct).toFixed(1):null;
       const dCls=delta===null?'deq':delta>0?'du':delta<0?'dd':'deq';
       const dTxt=delta===null?'—':delta>0?`▲ +${delta}pp`:delta<0?`▼ ${delta}pp`:'=';
-      h+=`<div class="card">
-        <div class="card-header"><div><div class="card-name">${insp.nome}</div><span class="turno-tag ${tCls}">Turno ${turno}</span></div><span class="delta-pill ${dCls}">${dTxt}</span></div>
-        ${D.days.map(d=>{const dd=insp.dias[d];return`<div class="comp-section-lbl">${d}</div>`+(dd?`<div class="comp-row"><span style="font-size:11px;font-weight:600;color:${bc(dd.status)};width:40px;flex-shrink:0">${dd.pct}%</span><div class="comp-bar-bg"><div class="comp-bar-fill" style="width:${w(dd.pct)}%;background:${bc(dd.status)}"></div></div><span class="badge ${bCls(dd.status)}" style="font-size:9px">${bTxt(dd.status)}</span></div>${linhasHtml(dd.linhas)}`:'<div style="font-size:12px;color:var(--text3);font-style:italic;padding:3px 0">Ausente</div>');}).join('')}
-        <div class="card-stats">${D.days.map(d=>`<div class="stat"><div class="stat-val">${insp.dias[d]?insp.dias[d].total:'—'}</div><div class="stat-lbl">${d}</div></div>`).join('')}</div>
-      </div>`;
+      h+=`<div class="card"><div class="card-header"><div><div class="card-name">${insp.nome}</div><span class="turno-tag ${tCls}">Turno ${turno}</span></div><span class="delta-pill ${dCls}">${dTxt}</span></div>
+      ${D.days.map(d=>{const dd=insp.dias[d];return`<div class="comp-section-lbl">${d}</div>`+(dd?`<div class="comp-row"><span style="font-size:11px;font-weight:600;color:${bc(dd.status)};width:40px;flex-shrink:0">${dd.pct}%</span><div class="comp-bar-bg"><div class="comp-bar-fill" style="width:${w(dd.pct)}%;background:${bc(dd.status)}"></div></div><span class="badge ${bCls(dd.status)}" style="font-size:9px">${bTxt(dd.status)}</span></div>${linhasHtml(dd.linhas)}`:'<div style="font-size:12px;color:var(--text3);font-style:italic;padding:3px 0">Ausente</div>');}).join('')}
+      <div class="card-stats">${D.days.map(d=>`<div class="stat"><div class="stat-val">${insp.dias[d]?insp.dias[d].total:'—'}</div><div class="stat-lbl">${d}</div></div>`).join('')}</div></div>`;
       return;
     }
     const d=insp.dias[day];
     if(!d){h+=`<div class="card absent-card"><div class="card-header"><div><div class="card-name">${insp.nome}</div><span class="turno-tag ${tCls}">Turno ${turno}</span></div><span class="badge babs">Ausente</span></div><div class="absent-msg">Sem registros neste dia</div></div>`;return;}
-    h+=`<div class="card">
-      <div class="card-header"><div><div class="card-name">${insp.nome}</div><span class="turno-tag ${tCls}">Turno ${turno}</span></div><span class="badge ${bCls(d.status)}">${bTxt(d.status)}</span></div>
-      <div class="big-pct" style="color:${bc(d.status)}">${d.pct}%</div>
-      <div class="big-lbl">${d.total} peças · meta ${d.meta}</div>
-      <div class="prog-track"><div class="prog-fill" style="width:${w(d.pct)}%;background:${bc(d.status)}"></div></div>
-      ${linhasHtml(d.linhas)}
-      <div class="card-stats">
-        <div class="stat"><div class="stat-val">${d.total}</div><div class="stat-lbl">realizadas</div></div>
-        <div class="stat"><div class="stat-val">${d.meta}</div><div class="stat-lbl">meta</div></div>
-      </div>
-    </div>`;
+    h+=`<div class="card"><div class="card-header"><div><div class="card-name">${insp.nome}</div><span class="turno-tag ${tCls}">Turno ${turno}</span></div><span class="badge ${bCls(d.status)}">${bTxt(d.status)}</span></div>
+    <div class="big-pct" style="color:${bc(d.status)}">${d.pct}%</div><div class="big-lbl">${d.total} peças · meta ${d.meta}</div>
+    <div class="prog-track"><div class="prog-fill" style="width:${w(d.pct)}%;background:${bc(d.status)}"></div></div>
+    ${linhasHtml(d.linhas)}
+    <div class="card-stats"><div class="stat"><div class="stat-val">${d.total}</div><div class="stat-lbl">realizadas</div></div><div class="stat"><div class="stat-val">${d.meta}</div><div class="stat-lbl">meta</div></div></div></div>`;
   });
-  h+='</div>';
-  el.innerHTML=h;
+  h+='</div>';el.innerHTML=h;
 }
 
 function renderProdutos(){
-  const el=document.getElementById('panel-produtos');
+  const el=document.getElementById('panel-produtos');if(!el)return;
   if(day==='comp'){
     let h=`<table class="prod-table"><thead><tr><th>Produto</th>${D.days.map(d=>`<th class="r">${d}</th>`).join('')}</tr></thead><tbody>`;
-    D.produtos.forEach(p=>{
-      const vals=D.days.map(d=>p.dias[d]);
-      const v0=vals[0],vL=vals[vals.length-1];
-      const trend=v0&&vL?(vL-v0>0?`<span style="color:#4db6ac;font-size:11px"> ▲</span>`:(vL-v0<0?`<span style="color:#ef9a9a;font-size:11px"> ▼</span>`:'')):'';
-      h+=`<tr><td>${p.nome}${trend}</td>${vals.map(v=>`<td class="r">${v!=null?v:'—'}</td>`).join('')}</tr>`;
-    });
+    D.produtos.forEach(p=>{const vals=D.days.map(d=>p.dias[d]);const v0=vals[0],vL=vals[vals.length-1];const trend=v0&&vL?(vL-v0>0?`<span style="color:#4db6ac;font-size:11px"> ▲</span>`:(vL-v0<0?`<span style="color:#ef9a9a;font-size:11px"> ▼</span>`:'')):'';h+=`<tr><td>${p.nome}${trend}</td>${vals.map(v=>`<td class="r">${v!=null?v:'—'}</td>`).join('')}</tr>`;});
     h+=`</tbody></table>`;el.innerHTML=h;return;
   }
   let h=`<table class="prod-table"><thead><tr><th>Produto</th><th class="r">Peças testadas</th></tr></thead><tbody>`;
-  D.produtos.forEach(p=>{
-    const v=p.dias[day];
-    if(!v){h+=`<tr style="opacity:.35"><td>${p.nome}</td><td class="r" style="font-size:12px;font-style:italic;color:var(--text3)">Sem produção</td></tr>`;return;}
-    h+=`<tr><td>${p.nome}</td><td class="r"><strong>${v}</strong></td></tr>`;
-  });
+  D.produtos.forEach(p=>{const v=p.dias[day];if(!v){h+=`<tr style="opacity:.35"><td>${p.nome}</td><td class="r" style="font-size:12px;font-style:italic;color:var(--text3)">Sem produção</td></tr>`;return;}h+=`<tr><td>${p.nome}</td><td class="r"><strong>${v}</strong></td></tr>`;});
   h+=`</tbody></table>`;el.innerHTML=h;
 }
 
+/* ── RELATÓRIO INDIVIDUAL ── */
+function buildRelatorio(){
+  const meses = [...new Set(D.days.map(d=>{const p=d.split('/');return `${p[1]}/${p[0].substring(0,4)||'2026'}`;}))];
+  const mesesUnicos = [...new Set(D.days.map(d=>{const p=d.split('/');return p[1];}))];
+
+  document.getElementById('panel-relatorio').innerHTML=`
+    <div class="rel-controls">
+      <div class="rel-field">
+        <label class="rel-label">Colaborador</label>
+        <select class="rel-select" id="rel-insp">
+          <option value="">Seleciona...</option>
+          ${D.inspetores.map(x=>`<option value="${x.nome}">${x.nome}</option>`).join('')}
+        </select>
+      </div>
+      <div class="rel-field">
+        <label class="rel-label">Mês</label>
+        <select class="rel-select" id="rel-mes" onchange="updateDiasDisponiveis()">
+          <option value="">Todos</option>
+          ${mesesUnicos.map(m=>`<option value="${m}">${m === '05' ? 'Maio' : m === '06' ? 'Junho' : m === '07' ? 'Julho' : m === '08' ? 'Agosto' : m}/2026</option>`).join('')}
+        </select>
+      </div>
+      <div class="rel-field">
+        <label class="rel-label">De</label>
+        <select class="rel-select" id="rel-de">${D.days.map(d=>`<option value="${d}">${d}</option>`).join('')}</select>
+      </div>
+      <div class="rel-field">
+        <label class="rel-label">Até</label>
+        <select class="rel-select" id="rel-ate">${D.days.map((d,i)=>`<option value="${d}" ${i===D.days.length-1?'selected':''}>${d}</option>`).join('')}</select>
+      </div>
+      <button class="btn-gerar" onclick="gerarRelatorio()">Gerar relatório</button>
+    </div>
+    <div id="rel-output"></div>
+  `;
+}
+
+function updateDiasDisponiveis(){
+  const mes=document.getElementById('rel-mes').value;
+  const dias=mes?D.days.filter(d=>d.split('/')[1]===mes):D.days;
+  const opts=dias.map(d=>`<option value="${d}">${d}</option>`).join('');
+  document.getElementById('rel-de').innerHTML=opts;
+  document.getElementById('rel-ate').innerHTML=dias.map((d,i)=>`<option value="${d}" ${i===dias.length-1?'selected':''}>${d}</option>`).join('');
+}
+
+function gerarRelatorio(){
+  const nome=document.getElementById('rel-insp').value;
+  const de=document.getElementById('rel-de').value;
+  const ate=document.getElementById('rel-ate').value;
+  if(!nome){alert('Seleciona um colaborador!');return;}
+
+  const insp=D.inspetores.find(x=>x.nome===nome);
+  if(!insp){return;}
+
+  // Filter days in range
+  function dayToNum(d){const p=d.split('/');return parseInt(p[1])*100+parseInt(p[0]);}
+  const deN=dayToNum(de),ateN=dayToNum(ate);
+  const dias=D.days.filter(d=>{const n=dayToNum(d);return n>=deN&&n<=ateN;});
+
+  // Calc stats over period
+  const diasComDados=dias.filter(d=>insp.dias[d]);
+  if(!diasComDados.length){document.getElementById('rel-output').innerHTML=`<p style="color:var(--text3);text-align:center;padding:40px">Sem dados para este colaborador no período selecionado.</p>`;return;}
+
+  const totalPecas=diasComDados.reduce((a,d)=>a+insp.dias[d].total,0);
+  const totalMeta=diasComDados.reduce((a,d)=>a+insp.dias[d].meta,0);
+  const mediaDiaria=Math.round(totalPecas/diasComDados.length);
+  const mediaPct=Math.round(totalPecas/totalMeta*1000)/10;
+  const consistencia=diasComDados.filter(d=>insp.dias[d].pct>=85).length;
+  const turno=getTurno(nome);
+  const iniciais=nome.split(' ').filter((_,i)=>i===0||i===nome.split(' ').length-1).map(x=>x[0]).join('').toUpperCase();
+
+  // Average lines over period
+  const linhasMap={};
+  diasComDados.forEach(d=>{
+    insp.dias[d].linhas.forEach(l=>{
+      if(!linhasMap[l.label])linhasMap[l.label]={total:0,meta:0,count:0};
+      linhasMap[l.label].total+=l.total;
+      linhasMap[l.label].meta+=l.meta;
+      linhasMap[l.label].count++;
+    });
+  });
+  const linhas=Object.entries(linhasMap).map(([label,v])=>({label,total:Math.round(v.total/v.count),meta:Math.round(v.meta/v.count),pct:Math.round(v.total/v.meta*1000)/10}));
+
+  const statusGeral=mediaPct>=95?'SUPEROU':mediaPct>=85?'ATINGIU':'NAO_ATINGIU';
+  const corGeral=bc(statusGeral);
+
+  document.getElementById('rel-output').innerHTML=`
+    <div style="display:flex;justify-content:flex-end;margin-bottom:12px">
+      <button class="btn-img" onclick="exportarImagem()">📸 Exportar imagem</button>
+    </div>
+    <div id="rel-card">
+      <div class="rel-header">
+        <div style="display:flex;align-items:center;gap:14px">
+          <div class="rel-avatar">${iniciais}</div>
+          <div>
+            <div class="rel-name">${nome}</div>
+            <div class="rel-sub">Turno ${turno} · ${linhas.map(l=>l.label).join(' · ')}</div>
+          </div>
+        </div>
+        <div class="rel-period">
+          <span>Período</span>
+          <strong>${de} → ${ate}</strong>
+          <span>${diasComDados.length} dia${diasComDados.length!==1?'s':''} com dados</span>
+        </div>
+      </div>
+
+      <div class="rel-kpis">
+        <div class="rel-kpi"><div class="rel-kpi-lbl">Total peças</div><div class="rel-kpi-val">${totalPecas.toLocaleString('pt-BR')}</div><div class="rel-kpi-sub">no período</div></div>
+        <div class="rel-kpi"><div class="rel-kpi-lbl">Média diária</div><div class="rel-kpi-val">${mediaDiaria}</div><div class="rel-kpi-sub">meta: ${Math.round(totalMeta/diasComDados.length)}/dia</div></div>
+        <div class="rel-kpi"><div class="rel-kpi-lbl">% média meta</div><div class="rel-kpi-val" style="color:${corGeral}">${mediaPct}%</div><div class="rel-kpi-sub">${bTxt(statusGeral)}</div></div>
+        <div class="rel-kpi"><div class="rel-kpi-lbl">Consistência</div><div class="rel-kpi-val">${consistencia}/${diasComDados.length}</div><div class="rel-kpi-sub">dias ≥ 85% meta</div></div>
+      </div>
+
+      <div class="rel-section">Evolução diária</div>
+      <div class="rel-days">
+        ${diasComDados.map(d=>{
+          const dd=insp.dias[d];
+          const cor=bc(dd.status);
+          return`<div class="rel-day">
+            <div class="rel-day-date">${d}</div>
+            <div class="rel-day-bar-wrap">
+              <div class="rel-day-bar-bg"><div class="rel-day-bar-fill" style="width:${w(dd.pct)}%;background:${cor}"></div></div>
+              <div class="rel-day-pct" style="color:${cor}">${dd.pct}%</div>
+            </div>
+            <div class="rel-day-real">${dd.total} / ${dd.meta} peças</div>
+            <span class="badge ${bCls(dd.status)}" style="font-size:9px;flex-shrink:0">${bTxt(dd.status)}</span>
+          </div>`;
+        }).join('')}
+      </div>
+
+      <div class="rel-section">Média por produto / linha</div>
+      <table class="rel-lines-table">
+        <thead><tr><th>Produto / Linha</th><th class="r">Realiz. (média)</th><th class="r">Meta</th><th class="r">% Meta</th></tr></thead>
+        <tbody>
+          ${linhas.map(l=>`<tr><td>${l.label}</td><td class="r">${l.total}</td><td class="r">${l.meta}</td><td class="r" style="color:${l.pct>=95?'#4db6ac':l.pct>=85?'#81c784':'#ef9a9a'};font-weight:600">${l.pct}%</td></tr>`).join('')}
+        </tbody>
+      </table>
+
+      <div class="rel-footer">
+        <span>Zagonel · KPI Inspetores · Gerado em ${new Date().toLocaleDateString('pt-BR')}</span>
+        <div class="rel-legend">
+          <span style="color:#4db6ac">▲ Superou ≥95%</span>
+          <span style="color:#81c784">● Atingiu 85–95%</span>
+          <span style="color:#ef9a9a">✖ Não atingiu &lt;85%</span>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+async function exportarImagem(){
+  const card=document.getElementById('rel-card');
+  if(!card)return;
+  const btn=document.querySelector('.btn-img');
+  btn.textContent='⏳ Gerando...';btn.disabled=true;
+  try{
+    const canvas=await html2canvas(card,{backgroundColor:'#111827',scale:2,useCORS:true});
+    const link=document.createElement('a');
+    const nome=document.getElementById('rel-insp').value.split(' ')[0];
+    const de=document.getElementById('rel-de').value.replace('/','');
+    const ate=document.getElementById('rel-ate').value.replace('/','');
+    link.download=`KPI_${nome}_${de}_${ate}.png`;
+    link.href=canvas.toDataURL('image/png');
+    link.click();
+  }catch(e){alert('Erro ao gerar imagem.');}
+  btn.textContent='📸 Exportar imagem';btn.disabled=false;
+}
+
 loadData();
-// Auto-refresh a cada 5 minutos
-setInterval(()=>{if(D)loadData();}, 5*60*1000);
+setInterval(()=>{if(D)loadData();},5*60*1000);
 </script>
 </body>
 </html>
