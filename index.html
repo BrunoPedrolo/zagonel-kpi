@@ -516,10 +516,13 @@ function renderRankingCharts(){
   // Destroy old charts
   Object.values(chartInstances).forEach(c=>{try{c.destroy();}catch(e){}});
   chartInstances={};
+  if(!D||!D.days||!D.days.length)return;
+  const activeDays=getRankingDays();
+  if(!activeDays.length)return;
 
   const G='#22B04B',GA='#66BB6A',GN='#e65100';
   const tc='rgba(90,138,90,0.8)',gc='rgba(34,176,75,0.12)';
-  const activeDays=getRankingDays();const lastDay=activeDays[activeDays.length-1]||D.days[D.days.length-1];
+  const lastDay=activeDays[activeDays.length-1]||D.days[D.days.length-1];
   const lastSummary=D.inspetores.map(x=>{const d=x.dias[lastDay];return d?{nome:x.nome,pct:d.pct,status:d.status}:null;}).filter(Boolean);
 
   // Update KPIs
@@ -563,6 +566,7 @@ function renderRankingCharts(){
   // C4: Heatmap canvas
   const c4=el('rc4');if(c4){
     c4.width=c4.parentElement.offsetWidth-28||300;
+    c4.height=Math.max(160, D.inspetores.length*22+30);
     const ctx=c4.getContext('2d');
     const names=D.inspetores.map(x=>x.nome.split(' ')[0]);
     const dias=activeDays;
@@ -590,24 +594,34 @@ function renderRankingCharts(){
   // C5: Consecutivos
   const c5=el('rc5');if(c5){
     c5.width=c5.parentElement.offsetWidth-28||300;
+    c5.height=180;
     const ctx=c5.getContext('2d');
     ctx.clearRect(0,0,c5.width,c5.height);
-    const data=D.inspetores.map(x=>{let c=0,max=0;D.days.forEach(d=>{if(x.dias[d]&&x.dias[d].pct>=CFG.threshAtinge){c++;max=Math.max(max,c);}else c=0;});return{nome:x.nome.split(' ')[0],dias:max,total:D.days.length};}).sort((a,b)=>b.dias-a.dias).slice(0,8);
+    const data=D.inspetores.map(x=>{
+      let c=0,max=0;
+      activeDays.forEach(d=>{if(x.dias[d]&&x.dias[d].pct>=CFG.threshAtinge){c++;max=Math.max(max,c);}else c=0;});
+      return{nome:x.nome.split(' ')[0],dias:max,total:Math.min(activeDays.length,7)};
+    }).sort((a,b)=>b.dias-a.dias).slice(0,8);
     const ml=68,rh=16,gap=6,bsz=13,bGap=3;
-    ctx.font='11px -apple-system';
-    data.forEach(([,nome,dias,total]=Object.values,x,i)=>{
+    ctx.font='11px -apple-system,sans-serif';
+    data.forEach((x,i)=>{
       const {nome:n,dias:d,total:t}=x;
-      const y=i*(rh+gap);
+      const y=i*(rh+gap)+4;
       ctx.fillStyle='#5a8a60';ctx.textAlign='right';ctx.fillText(n,ml-4,y+rh/2+4);
-      for(let j=0;j<Math.min(t,7);j++){ctx.fillStyle=j<d?G:'rgba(0,0,0,0.07)';ctx.beginPath();ctx.roundRect(ml+j*(bsz+bGap),y+2,bsz,bsz,3);ctx.fill();};
-      ctx.fillStyle=d>=t?G:'#1a2e1a';ctx.font='bold 11px -apple-system';ctx.textAlign='left';ctx.fillText(d+'d',ml+Math.min(t,7)*(bsz+bGap)+6,y+rh/2+4);
+      for(let j=0;j<t;j++){
+        ctx.fillStyle=j<d?G:'rgba(0,0,0,0.07)';
+        ctx.beginPath();ctx.roundRect(ml+j*(bsz+bGap),y+2,bsz,bsz,3);ctx.fill();
+      }
+      ctx.fillStyle=d>=t?G:'#1a2e1a';ctx.font='bold 11px -apple-system,sans-serif';ctx.textAlign='left';
+      ctx.fillText(d+'d',ml+t*(bsz+bGap)+6,y+rh/2+4);
+      ctx.font='11px -apple-system,sans-serif';
     });
   }
 
   // C6: Barras agrupadas produto
   const c6=el('rc6');if(c6&&D.produtos){
     const colors=['rgba(34,176,75,0.6)','rgba(34,176,75,0.85)','rgba(34,176,75,1)','rgba(102,187,106,0.7)','rgba(102,187,106,0.9)'];
-    chartInstances.c6=new Chart(c6,{type:'bar',data:{labels:D.produtos.map(p=>p.nome.length>12?p.nome.substring(0,12)+'…':p.nome),datasets:useDays.map((d,i)=>{return{label:d,data:D.produtos.map(p=>(p.dias[d]||0)),backgroundColor:colors[i%colors.length],borderRadius:3};})},options:{responsive:true,plugins:{legend:{display:true,position:'top',labels:{color:tc,font:{size:10},boxWidth:10,padding:10}}},scales:{x:{grid:{display:false},ticks:{color:tc,font:{size:10}}},y:{grid:{color:gc},ticks:{color:tc,font:{size:10}}}}}});
+    c6.height=200;chartInstances.c6=new Chart(c6,{type:'bar',data:{labels:D.produtos.map(p=>p.nome.length>12?p.nome.substring(0,12)+'…':p.nome),datasets:activeDays.map((d,i)=>{return{label:d,data:D.produtos.map(p=>(p.dias[d]||0)),backgroundColor:colors[i%colors.length],borderRadius:3};})},options:{responsive:true,plugins:{legend:{display:true,position:'top',labels:{color:tc,font:{size:10},boxWidth:10,padding:10}}},scales:{x:{grid:{display:false},ticks:{color:tc,font:{size:10}}},y:{grid:{color:gc},ticks:{color:tc,font:{size:10}}}}}});
   }
 }
 
@@ -672,7 +686,7 @@ function gerarRel(){
         <div class="rel-kpi"><div class="rel-lbl" style="font-size:10px;color:#5a8a60;margin-bottom:3px">Consistência</div><div style="font-size:20px;font-weight:700;color:#1a2e1a">${dcd.filter(d=>insp.dias[d].pct>=CFG.threshAtinge).length}/${dcd.length}</div></div>
       </div>
       <div style="font-size:10px;font-weight:700;color:#5a8a60;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Evolução diária</div>
-      ${dcd.map(d=>{const dd=insp.dias[d];const just=getJust(nome,d);return`<div class="rel-day"><span style="font-size:12px;font-weight:500;color:#5a8a60;width:40px">${d}</span><div style="flex:1;height:5px;background:#e8f5e9;border-radius:3px;overflow:hidden"><div style="width:${W(dd.pct)}%;height:100%;background:${BC(dd.status)}"></div></div><span style="font-size:12px;font-weight:700;color:${BC(dd.status)};min-width:38px;text-align:right">${dd.pct}%</span><span style="font-size:11px;color:#5a8a60;min-width:70px;text-align:right">${dd.total}/${dd.meta} peças</span><span class="badge ${BCls(dd.status)}" style="font-size:9px;flex-shrink:0">${BTxt(dd.status)}</span>${just?`<span style="font-size:10px;color:#0d47a1" title="${just.motivo}">💬</span>`:''}</div>`;}).join('')}
+      ${dcd.map(d=>{const dd=insp.dias[d];const just=getJust(nome,d);return`<div style="margin-bottom:8px"><div class="rel-day"><span style="font-size:12px;font-weight:500;color:#5a8a60;width:40px">${d}</span><div style="flex:1;height:5px;background:#e8f5e9;border-radius:3px;overflow:hidden"><div style="width:${W(dd.pct)}%;height:100%;background:${BC(dd.status)}"></div></div><span style="font-size:12px;font-weight:700;color:${BC(dd.status)};min-width:38px;text-align:right">${dd.pct}%</span><span style="font-size:11px;color:#5a8a60;min-width:70px;text-align:right">${dd.total}/${dd.meta} peças</span><span class="badge ${BCls(dd.status)}" style="font-size:9px;flex-shrink:0">${BTxt(dd.status)}</span></div>${just?`<div style="margin-left:46px;margin-top:3px;background:#fff8e1;border-left:3px solid #ffe082;border-radius:0 5px 5px 0;padding:5px 8px;font-size:11px;color:#5d4037">💬 <strong>${just.motivo}</strong>${just.obs?` · <em>${just.obs}</em>`:''}<span style="color:#bbb;margin-left:6px;font-size:10px">${just.ts||''}</span></div>`:dd.status==='NAO_ATINGIU'?`<div style="margin-left:46px;margin-top:3px;font-size:11px;color:#e65100;font-style:italic;opacity:.7">⚠ Sem justificativa registrada</div>`:''}</div>`;}).join('')}
       <div style="font-size:10px;font-weight:700;color:#5a8a60;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px">Média por linha</div>
       <table class="rel-lt"><thead><tr><th>Produto / Linha</th><th class="r">Realiz.</th><th class="r">Meta</th><th class="r">% Meta</th></tr></thead><tbody>${linhas.map(l=>`<tr><td>${l.label}</td><td class="r">${l.total}</td><td class="r">${l.meta}</td><td class="r" style="color:${BC(l.status)};font-weight:700">${l.pct}%</td></tr>`).join('')}</tbody></table>
       <div style="display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid #d0e8d0;font-size:10px;color:#5a8a60">
@@ -696,7 +710,7 @@ function buildJustificativas(){
 
 function renderJustificativas(){
   const el=document.getElementById('p-justificativas');if(!el)return;
-  const activeDays=getRankingDays();const lastDay=activeDays[activeDays.length-1]||D.days[D.days.length-1];
+  const lastDay=activeDays[activeDays.length-1]||D.days[D.days.length-1];
   const abaixo=D.inspetores.filter(x=>{const d=x.dias[lastDay];return d&&d.status==='NAO_ATINGIU';});
   const pendentes=abaixo.filter(x=>!getJust(x.nome,lastDay));
   const justificados=abaixo.filter(x=>getJust(x.nome,lastDay));
