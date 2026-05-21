@@ -253,14 +253,22 @@ function loadCfg(){try{const s=localStorage.getItem('zag_cfg');if(s){const c=JSO
 async function loadData(){
   try{
     const r=await fetch('/data');
-    if(!r.ok)throw new Error();
-    D=await r.json();
-    // Merge any saved metas into data
+    if(!r.ok)throw new Error('server');
+    const raw=await r.json();
+    if(raw.error)throw new Error('nodata');
+    D=raw;delete D._raw;
     day=D.days[D.days.length-1];
-    populateInspLogin();
-    buildUI();
+    populateInspLogin();buildUI();
   }catch(e){
-    document.getElementById('main-content').innerHTML='<div style="text-align:center;padding:60px;color:#5a8a60">⚠️ Sem dados ainda. <a href="/upload-page" style="color:#22B04B;font-weight:600">Fazer upload →</a></div>';
+    try{
+      const gh=await fetch('https://raw.githubusercontent.com/BrunoPedrolo/zagonel-kpi/main/data.json?t='+Date.now());
+      if(!gh.ok)throw new Error('github');
+      D=await gh.json();delete D._raw;
+      day=D.days[D.days.length-1];
+      populateInspLogin();buildUI();
+    }catch(e2){
+      document.getElementById('main-content').innerHTML='<div style="text-align:center;padding:60px;color:#5a8a60">⚠️ Sem dados ainda. <a href="/upload-page" style="color:#22B04B;font-weight:600">Fazer upload →</a></div>';
+    }
   }
 }
 
