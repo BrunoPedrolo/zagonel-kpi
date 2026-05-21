@@ -292,8 +292,9 @@ async function go(){
     }
     if(d.success){
       setProgress(100);
-      ss('✅ Dashboard atualizado!<br>Dias: '+d.days.join(', '),'ok');
-      setTimeout(()=>window.location.href='/?t='+Date.now(),2500);
+      ss('✅ Dashboard atualizado! Dias: '+d.days.join(', '),'ok');
+      if(d.data) sessionStorage.setItem('freshData', JSON.stringify(d.data));
+      setTimeout(()=>window.location.href='/',2500);
     }else{
       ss('❌ Erro: '+d.error,'err');
       document.getElementById('btn').disabled=false;
@@ -386,7 +387,8 @@ def upload():
         return jsonify({
             "success": True,
             "days": list(all_dfs.keys()),
-            "message": f"Processado: {list(new_days_data.keys())}"
+            "message": f"Processado: {list(new_days_data.keys())}",
+            "data": {k: v for k, v in result.items() if k != '_raw'}
         })
 
     except Exception as e:
