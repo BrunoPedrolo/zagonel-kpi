@@ -8,7 +8,7 @@ services:
       - key: API_KEY
         value: zagonel2026
       - key: GITHUB_TOKEN
-        value: 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
+        value: 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
       - key: GITHUB_REPO
         value: BrunoPedrolo/zagonel-kpi
     disk:
