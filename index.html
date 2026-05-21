@@ -166,12 +166,14 @@ body{background:#f4f6f4;color:#1a2e1a;font-family:-apple-system,BlinkMacSystemFo
         <div class="admin-tab" onclick="setAdminTab('params')">Parâmetros</div>
         <div class="admin-tab" onclick="setAdminTab('motivos')">Motivos</div>
         <div class="admin-tab" onclick="setAdminTab('acessos')">Colaboradores</div>
+        <div class="admin-tab" onclick="setAdminTab('justadmin')">Justificativas</div>
         <div class="admin-tab" onclick="setAdminTab('senha')">Minha senha</div>
       </div>
       <div id="ap-metas" class="admin-panel active"></div>
       <div id="ap-params" class="admin-panel"></div>
       <div id="ap-motivos" class="admin-panel"></div>
       <div id="ap-acessos" class="admin-panel"></div>
+      <div id="ap-justadmin" class="admin-panel"></div>
       <div id="ap-senha" class="admin-panel"></div>
     </div>
   </div>
@@ -729,10 +731,10 @@ function renderJustificativas(){
 function openAdmin(){document.getElementById('adminOverlay').classList.add('open');document.getElementById('admin-login').style.display='flex';document.getElementById('admin-content').style.display='none';document.getElementById('admin-pw-input').value='';document.getElementById('admin-pw-err').style.display='none';}
 function closeAdmin(){document.getElementById('adminOverlay').classList.remove('open');}
 function checkAdmin(){const pw=document.getElementById('admin-pw-input').value;if(pw===CFG.adminPw){document.getElementById('admin-login').style.display='none';document.getElementById('admin-content').style.display='block';buildAdminContent();}else{document.getElementById('admin-pw-err').style.display='block';}}
-function setAdminTab(t){document.querySelectorAll('.admin-tab').forEach((b,i)=>b.classList.toggle('active',['metas','params','motivos','acessos','senha'][i]===t));document.querySelectorAll('.admin-panel').forEach((p,i)=>p.classList.toggle('active',['ap-metas','ap-params','ap-motivos','ap-acessos','ap-senha'][i]==='ap-'+t));}
+function setAdminTab(t){document.querySelectorAll('.admin-tab').forEach((b,i)=>b.classList.toggle('active',['metas','params','motivos','acessos','justadmin','senha'][i]===t));document.querySelectorAll('.admin-panel').forEach((p,i)=>p.classList.toggle('active',['ap-metas','ap-params','ap-motivos','ap-acessos','ap-justadmin','ap-senha'][i]==='ap-'+t));}
 
 function buildAdminContent(){
-  buildAdminMetas();buildAdminParams();buildAdminMotivos();buildAdminAcessos();buildAdminSenha();
+  buildAdminMetas();buildAdminParams();buildAdminMotivos();buildAdminAcessos();buildAdminJust();buildAdminSenha();
 }
 
 function buildAdminMetas(){
@@ -860,6 +862,107 @@ function saveAdminAcessos(){
   if(!D)return;
   D.inspetores.forEach(insp=>{const k=insp.nome.replace(/[\s]/g,'_');const el=document.getElementById('ac_'+k);if(el)CFG.acessos[insp.nome]=el.value;});
   saveCfg();alert('Senhas salvas!');
+}
+
+function buildAdminJust(){
+  const el=document.getElementById('ap-justadmin');
+  if(!el||!D)return;
+
+  // Collect all justificativas from localStorage
+  const all=[];
+  try{
+    for(let i=0;i<localStorage.length;i++){
+      const k=localStorage.key(i);
+      if(k&&k.startsWith('just_')){
+        const raw=localStorage.getItem(k);
+        if(raw){
+          const j=JSON.parse(raw);
+          const parts=k.replace('just_','').split('|');
+          const nome=parts[0];
+          const dia=parts[1];
+          all.push({nome,dia,motivo:j.motivo,obs:j.obs||'',ts:j.ts||'',key:k});
+        }
+      }
+    }
+  }catch(e){}
+
+  if(!all.length){
+    el.innerHTML='<div style="text-align:center;padding:30px;color:#5a8a60;font-size:13px">Nenhuma justificativa registrada ainda.</div>';
+    return;
+  }
+
+  // Sort by dia desc
+  all.sort((a,b)=>b.dia.localeCompare(a.dia));
+
+  let h=`<div style="font-size:12px;color:#5a8a60;margin-bottom:12px">${all.length} justificativa${all.length!==1?'s':''} registrada${all.length!==1?'s':''}. Clica em Editar ou Apagar para gerenciar.</div>`;
+
+  all.forEach((j,idx)=>{
+    const insp=D.inspetores.find(x=>x.nome===j.nome);
+    const d=insp?.dias[j.dia];
+    h+=`<div id="just-admin-item-${idx}" style="background:#fff;border:1px solid #e8f5e9;border-radius:8px;padding:10px 12px;margin-bottom:8px">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
+        <div style="flex:1">
+          <div style="font-size:13px;font-weight:700;color:#1a2e1a">${j.nome}</div>
+          <div style="font-size:11px;color:#5a8a60;margin-top:2px">Dia: ${j.dia} · ${d?d.pct+'% da meta':'sem dado'}</div>
+          <div style="margin-top:6px;background:#fff8e1;border-radius:6px;padding:6px 8px;font-size:12px;color:#5d4037">
+            💬 <strong>${j.motivo}</strong>${j.obs?'<br><span style="color:#6d4c41">'+j.obs+'</span>':''}
+          </div>
+          ${j.ts?`<div style="font-size:10px;color:#9e9e9e;margin-top:3px">Registrado: ${j.ts}</div>`:''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
+          <button class="btn btn-sm" onclick="editAdminJust(${idx})" style="color:#1565C0;border-color:#90caf9;font-size:11px">✏ Editar</button>
+          <button class="btn btn-sm" onclick="deleteAdminJust('${j.key}',${idx})" style="color:#e65100;border-color:#ffcc80;font-size:11px">🗑 Apagar</button>
+        </div>
+      </div>
+      <div id="just-admin-edit-${idx}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #e8f5e9">
+        <div style="display:flex;flex-direction:column;gap:8px">
+          <div>
+            <div style="font-size:11px;font-weight:600;color:#5a8a60;margin-bottom:3px">Motivo</div>
+            <select class="sel" id="jae-motivo-${idx}" style="width:100%">
+              ${CFG.motivos.map(m=>`<option ${j.motivo===m?'selected':''}>${m}</option>`).join('')}
+            </select>
+          </div>
+          <div>
+            <div style="font-size:11px;font-weight:600;color:#5a8a60;margin-bottom:3px">Observação</div>
+            <textarea class="inp inp-full" id="jae-obs-${idx}" rows="2" style="resize:none;font-size:12px">${j.obs||''}</textarea>
+          </div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-g btn-sm" onclick="saveAdminJust('${j.key}',${idx})">Salvar</button>
+            <button class="btn btn-sm" onclick="cancelEditJust(${idx})">Cancelar</button>
+          </div>
+        </div>
+      </div>
+    </div>`;
+  });
+
+  el.innerHTML=h;
+  // Store all for reference
+  window._adminJusts=all;
+}
+
+function editAdminJust(idx){
+  document.getElementById('just-admin-edit-'+idx).style.display='block';
+  document.querySelector(`#just-admin-item-${idx} button[onclick*='editAdminJust']`).style.display='none';
+}
+function cancelEditJust(idx){
+  document.getElementById('just-admin-edit-'+idx).style.display='none';
+  document.querySelector(`#just-admin-item-${idx} button[onclick*='editAdminJust']`).style.display='';
+}
+function saveAdminJust(key,idx){
+  const motivo=document.getElementById('jae-motivo-'+idx)?.value;
+  const obs=document.getElementById('jae-obs-'+idx)?.value||'';
+  if(!motivo)return;
+  try{
+    const existing=JSON.parse(localStorage.getItem(key)||'{}');
+    localStorage.setItem(key,JSON.stringify({...existing,motivo,obs,editadoEm:new Date().toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit'})}));
+  }catch(e){}
+  buildAdminJust();render();renderJustificativas();
+  alert('Justificativa atualizada!');
+}
+function deleteAdminJust(key,idx){
+  if(!confirm('Tem certeza que deseja apagar esta justificativa?'))return;
+  try{localStorage.removeItem(key);}catch(e){}
+  buildAdminJust();render();renderJustificativas();
 }
 
 function buildAdminSenha(){
