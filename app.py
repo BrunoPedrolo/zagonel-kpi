@@ -4,7 +4,7 @@ from flask_cors import CORS
 import pandas as pd
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "*"}})
 
 DATA_FILE = 'data.json'
 
@@ -261,8 +261,15 @@ async function go(){
 def get_data():
     data = load_data()
     if not data:
+        # Try one more time from github
+        data = github_load()
+        if data:
+            save_data(data)
+    if not data:
         return jsonify({"error": "Sem dados ainda"}), 404
-    return jsonify(data)
+    # Remove internal _raw key before sending to client
+    clean = {k:v for k,v in data.items() if k != '_raw'}
+    return jsonify(clean)
 
 @app.route('/upload', methods=['POST'])
 def upload():
