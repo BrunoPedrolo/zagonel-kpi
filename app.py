@@ -397,12 +397,17 @@ def upload():
 # Auto-restore from GitHub on startup if no local data
 def startup_restore():
     if not os.path.exists(DATA_FILE):
-        print("No local data found, restoring from GitHub...")
-        data = github_load()
-        if data:
+        print("No local data, restoring from GitHub raw...")
+        try:
+            raw_url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/{GITHUB_FILE}'
+            req = urllib.request.Request(raw_url)
+            with urllib.request.urlopen(req, timeout=15) as r:
+                data = json.loads(r.read())
             with open(DATA_FILE, 'w') as f:
                 json.dump(data, f, ensure_ascii=False)
-            print(f"Restored {len(data.get('days',[]))} days from GitHub")
+            print(f"Restored {len(data.get('days',[]))} days from GitHub raw")
+        except Exception as e:
+            print(f"Restore failed: {e}")
 
 startup_restore()
 
