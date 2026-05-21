@@ -839,7 +839,7 @@ function salvarJust(nome,d){
   if(!motivo){alert('Seleciona um motivo!');return;}
   const key='just_'+nome+'|'+d;
   const ts=new Date().toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  try{localStorage.setItem(key,JSON.stringify({motivo,obs,ts}))};}catch(e){};
+  try{localStorage.setItem(key,JSON.stringify({motivo,obs,ts}));}catch(e){};
   closeJust();render();renderJustificativas();
   alert('Justificativa salva!');
 }
