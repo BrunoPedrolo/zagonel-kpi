@@ -1,1082 +1,410 @@
-<!DOCTYPE html>
+import os, json, threading, base64, urllib.request
+from flask import Flask, request, jsonify
+from flask_cors import CORS
+import pandas as pd
+
+app = Flask(__name__)
+CORS(app, resources={r"/*": {"origins": "*"}})
+
+DATA_FILE = 'data.json'
+
+META_MAP = [
+    ('Alicia',    'DUCHA DUCALI',   '',          72),
+    ('Ana Paula', 'AQUECEDOR',      '',         150),
+    ('Andrea',    'PRIMA',          '',         144),
+    ('Andris',    'MOMENT',         'Linha 02',  72),
+    ('Andris',    'MOMENT',         'Linha 03',  36),
+    ('Andris',    'MOMENT',         'Linha 04',  72),
+    ('Caroline',  'LUNA',           '',          72),
+    ('Caroline',  'MOMENT 4T',      '',          72),
+    ('Eliandra',  'AQUECEDOR',      '',         150),
+    ('Iliane',    'AQUECEDOR',      '',         150),
+    ('Iliane',    'MOMENT 4T',      '',         150),
+    ('Karen',     'DUCHA MOVE',     '',          72),
+    ('Karen',     'DUCHA SUBLIME',  '',          72),
+    ('Ketlin',    'PRIMA',          '',          72),
+    ('Ketlin',    'MOMENT',         'Linha 01',  72),
+    ('Marianny',  'DUCHA DUCALI',   '',          72),
+    ('Marta',     'AQUECEDOR',      '',         150),
+    ('Thalia',    'PRIMA',          '',          72),
+    ('Yenire',    'AQUECEDOR',      '',         150),
+    ('Yenire',    'MOMENT',         'Linha 01',  72),
+    ('Yenire',    'MOMENT',         'Linha 02',  72),
+    ('Yenire',    'MOMENT',         'Linha 03',  72),
+    ('Yorjelis',  'MOMENT',         'Linha 01',  72),
+    ('Yorjelis',  'MOMENT',         'Linha 02',  72),
+    ('Yorjelis',  'MOMENT',         'Linha 03',  72),
+    ('Yorjelis',  'MOMENT',         'Linha 04',  72),
+]
+
+def get_meta(inspetor, produto, linha):
+    for (ki, kp, kl, meta) in META_MAP:
+        if ki in inspetor and kp in produto:
+            if kl == '' or kl in str(linha):
+                return meta
+    return 72
+
+def get_status(pct):
+    if pct >= 0.95: return 'SUPEROU'
+    elif pct >= 0.85: return 'ATINGIU'
+    return 'NAO_ATINGIU'
+
+def build_result(days_data):
+    result = {"inspetores": [], "totals_by_day": {}, "produtos": [], "days": list(days_data.keys())}
+    all_inspetores = sorted(set(sum([list(df['Inspetor'].unique()) for df in days_data.values()], [])))
+    for lbl, df in days_data.items():
+        s = df.groupby('Inspetor').agg(Total=('Total','sum'), Meta=('Meta','sum')).reset_index()
+        s['Pct'] = s['Total'] / s['Meta']
+        t, m = int(s['Total'].sum()), int(s['Meta'].sum())
+        result["totals_by_day"][lbl] = {
+            "total": t, "meta": m, "pct": round(t/m*100,1),
+            "n_superou": int((s['Pct']>=0.95).sum()),
+            "n_atingiu": int(((s['Pct']>=0.85)&(s['Pct']<0.95)).sum()),
+            "n_nao": int((s['Pct']<0.85).sum()),
+        }
+    for insp in all_inspetores:
+        obj = {"nome": insp, "dias": {}}
+        for lbl, df in days_data.items():
+            rows = df[df['Inspetor']==insp]
+            if len(rows):
+                tot, met = int(rows['Total'].sum()), int(rows['Meta'].sum())
+                pct = round(tot/met*100,1)
+                obj["dias"][lbl] = {
+                    "total": tot, "meta": met, "pct": pct,
+                    "status": get_status(tot/met),
+                    "linhas": [{"label": r['Produto_Linha'], "total": int(r['Total']),
+                                "meta": int(r['Meta']), "pct": round(float(r['Pct'])*100,1),
+                                "status": r['Status']} for _, r in rows.iterrows()]
+                }
+            else:
+                obj["dias"][lbl] = None
+        result["inspetores"].append(obj)
+    all_prods = sorted(set(sum([list(df['Produto'].unique()) for df in days_data.values()], [])))
+    for prod in all_prods:
+        obj = {"nome": prod, "dias": {}}
+        for lbl, df in days_data.items():
+            r = df[df['Produto']==prod]
+            obj["dias"][lbl] = int(r['Total'].sum()) if len(r) else None
+        result["produtos"].append(obj)
+    return result
+
+# - GitHub -
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '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')
+GITHUB_REPO  = os.environ.get('GITHUB_REPO', 'BrunoPedrolo/zagonel-kpi')
+GITHUB_FILE  = 'data.json'
+
+def github_get_sha():
+    try:
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
+        req = urllib.request.Request(url, headers={
+            'Authorization': f'token {GITHUB_TOKEN}',
+            'Accept': 'application/vnd.github.v3+json'
+        })
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())['sha']
+    except: return None
+
+def github_save(data):
+    if not GITHUB_TOKEN: return
+    try:
+        content = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
+        sha = github_get_sha()
+        payload = {"message": "Auto backup KPI data", "content": content}
+        if sha: payload["sha"] = sha
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+            headers={'Authorization': f'token {GITHUB_TOKEN}',
+                     'Accept': 'application/vnd.github.v3+json',
+                     'Content-Type': 'application/json'}, method='PUT')
+        urllib.request.urlopen(req, timeout=15)
+        print("GitHub backup OK")
+    except Exception as e:
+        print(f"GitHub backup failed: {e}")
+
+def github_load():
+    # Try raw URL first (works for public repos without token)
+    try:
+        raw_url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/{GITHUB_FILE}'
+        req = urllib.request.Request(raw_url)
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read())
+    except: pass
+    # Fallback to API with token
+    try:
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
+        req = urllib.request.Request(url, headers={
+            'Authorization': f'token {GITHUB_TOKEN}',
+            'Accept': 'application/vnd.github.v3+json'
+        })
+        with urllib.request.urlopen(req, timeout=10) as r:
+            content = json.loads(r.read())['content']
+            return json.loads(base64.b64decode(content).decode())
+    except: return None
+
+def load_data():
+    if os.path.exists(DATA_FILE):
+        with open(DATA_FILE) as f:
+            return json.load(f)
+    print("Local not found, restoring from GitHub...")
+    data = github_load()
+    if data:
+        with open(DATA_FILE, 'w') as f:
+            json.dump(data, f, ensure_ascii=False)
+    return data
+
+def save_data(data):
+    with open(DATA_FILE, 'w') as f:
+        json.dump(data, f, ensure_ascii=False)
+    threading.Thread(target=github_save, args=(data,), daemon=True).start()
+
+# - Routes -
+@app.route('/')
+def index():
+    with open('index.html') as f:
+        return f.read()
+
+@app.route('/data')
+def get_data():
+    data = load_data()
+    if not data:
+        data = github_load()
+        if data: save_data(data)
+    if not data:
+        return jsonify({"error": "Sem dados ainda"}), 404
+    clean = {k: v for k, v in data.items() if k != '_raw'}
+    return jsonify(clean)
+
+@app.route('/restore')
+def restore():
+    if os.path.exists(DATA_FILE):
+        os.remove(DATA_FILE)
+    data = github_load()
+    if data:
+        with open(DATA_FILE, 'w') as f:
+            json.dump(data, f, ensure_ascii=False)
+        days = data.get('days', [])
+        return f'''<html><body style="font-family:sans-serif;padding:40px;text-align:center">
+            <h2 style="color:#22B04B">- Dados restaurados!</h2>
+            <p>Dias: {', '.join(days)}</p>
+            <p>Inspetores: {len(data.get('inspetores',[]))}</p>
+            <a href="/" style="display:inline-block;margin-top:20px;background:#22B04B;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600">Ir para o dashboard -</a>
+        </body></html>'''
+    return '<html><body style="padding:40px;text-align:center"><h2 style="color:#e65100">- Backup n-o encontrado</h2></body></html>', 500
+
+@app.route('/upload-page')
+def upload_page():
+    return '''<!DOCTYPE html>
 <html lang="pt-BR">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>KPI · Inspetores · Zagonel</title>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+<head><meta charset="UTF-8"><title>Upload - Zagonel KPI</title>
 <style>
 *{box-sizing:border-box;margin:0;padding:0}
-body{background:#f4f6f4;color:#1a2e1a;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;min-height:100vh}
-.top-bar{background:#fff;border-bottom:3px solid #22B04B;padding:8px 20px;display:flex;justify-content:space-between;align-items:center;position:sticky;top:0;z-index:100;box-shadow:0 2px 8px rgba(34,176,75,.10)}
-.logo-cq{height:80px;object-fit:contain}
-.logo-z{height:40px;object-fit:contain}
-.top-center h1{font-size:15px;font-weight:700;color:#1a2e1a;text-align:center}
-.top-center p{font-size:11px;color:#5a8a60;text-align:center;margin-top:2px}
-.top-right{display:flex;align-items:center;gap:10px}
-.btn-admin{background:none;border:none;cursor:pointer;color:#a0c0a0;font-size:18px;padding:4px;transition:color .2s}
-.btn-admin:hover{color:#22B04B}
-.dash{padding:16px 20px;max-width:1100px;margin:0 auto}
-.main-tabs{display:flex;border-bottom:2px solid #d0e8d0;margin-bottom:16px;gap:0;flex-wrap:wrap}
-.main-tab{padding:8px 20px;font-size:13px;font-weight:600;cursor:pointer;color:#5a8a60;border-bottom:3px solid transparent;margin-bottom:-2px;transition:all .15s;white-space:nowrap}
-.main-tab.active{color:#22B04B;border-bottom-color:#22B04B}
-.panel{display:none}.panel.active{display:block}
-.day-bar{display:flex;align-items:center;gap:6px;flex-wrap:wrap;margin-bottom:12px}
-.dbtn{padding:6px 12px;font-size:12px;font-weight:500;background:#fff;border:1px solid #d0e8d0;border-radius:6px;cursor:pointer;color:#3a6e3a;transition:all .15s}
-.dbtn:hover,.dbtn.active{background:#22B04B;color:#fff;border-color:#22B04B}
-.filter-bar{display:flex;flex-direction:column;gap:8px;margin-bottom:16px}
-.filter-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.filter-lbl{font-size:12px;font-weight:600;color:#3a6e3a;white-space:nowrap}
-.fchip{padding:5px 12px;font-size:12px;border-radius:20px;cursor:pointer;border:1.5px solid #d0e8d0;background:#fff;color:#3a6e3a;transition:all .15s;font-weight:500;white-space:nowrap}
-.fchip:hover{border-color:#22B04B}
-.fchip.active{background:#22B04B;color:#fff;border-color:#22B04B}
-.kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:16px}
-.kpi-card{background:#fff;border:1.5px solid #d0e8d0;border-radius:10px;padding:12px 14px;position:relative;overflow:hidden}
-.kpi-card::before{content:'';position:absolute;top:0;left:0;right:0;height:3px;background:#22B04B}
-.kl{font-size:10px;font-weight:700;color:#5a8a60;text-transform:uppercase;letter-spacing:.06em;margin-bottom:4px}
-.kv{font-size:24px;font-weight:700;color:#1a2e1a;line-height:1}
-.ks{font-size:11px;color:#5a8a60;margin-top:4px}
-.kbar{height:3px;background:#e8f5e9;border-radius:2px;overflow:hidden;margin-top:6px}
-.kbar-f{height:100%;background:#22B04B;border-radius:2px}
-.cards-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(275px,1fr));gap:12px}
-.icard{background:#fff;border:1.5px solid #d0e8d0;border-radius:10px;padding:14px;transition:all .15s}
-.icard:hover{border-color:#22B04B;box-shadow:0 2px 12px rgba(34,176,75,.1)}
-.icard.sem-dados{opacity:.45;border-style:dashed}
-.icard-h{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:10px;gap:8px}
-.av{width:34px;height:34px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;flex-shrink:0}
-.icard-name{font-size:13px;font-weight:700;color:#1a2e1a}
-.icard-sub{font-size:10px;color:#22B04B;margin-top:2px;font-weight:500}
-.badge{display:inline-flex;align-items:center;font-size:10px;font-weight:700;padding:3px 8px;border-radius:4px;white-space:nowrap}
-.bs{background:#e8f5e9;color:#1a6b3a;border:1px solid #a5d6a7}
-.ba{background:#f1f8e9;color:#2E7D32;border:1px solid #c5e1a5}
-.bn{background:#fff3e0;color:#e65100;border:1px solid #ffcc80}
-.babs{background:#f5f5f5;color:#9e9e9e;border:1px solid #e0e0e0}
-.bjust{background:#e3f2fd;color:#0d47a1;border:1px solid #90caf9}
-.big-pct{font-size:30px;font-weight:700;line-height:1;margin-bottom:2px}
-.imeta{font-size:11px;color:#5a8a60;margin-bottom:7px}
-.prog{height:4px;background:#e8f5e9;border-radius:2px;overflow:hidden;margin-bottom:8px}
-.prog-f{height:100%;border-radius:2px}
-.linha-row{display:flex;align-items:center;justify-content:space-between;margin-bottom:5px;font-size:11px}
-.linha-name{color:#5a8a60;max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.mini-bar{width:50px;height:3px;background:#e8f5e9;border-radius:2px;overflow:hidden}
-.mini-bar-f{height:100%;border-radius:2px}
-.istats{display:flex;border-top:1px solid #e8f5e9;padding-top:8px;margin-top:8px}
-.istat{flex:1;text-align:center}
-.istat-v{font-size:14px;font-weight:700;color:#1a2e1a}
-.istat-l{font-size:9px;color:#9e9e9e;text-transform:uppercase;letter-spacing:.04em;margin-top:1px}
-.istat+.istat{border-left:1px solid #e8f5e9}
-.just-box{background:#fff8e1;border:1px solid #ffe082;border-radius:6px;padding:6px 8px;margin-top:6px;font-size:11px;color:#5d4037}
-.g2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
-.g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px}
-.gchart{background:#fff;border:1.5px solid #d0e8d0;border-radius:10px;overflow:hidden;margin-bottom:12px}
-.gchart-h{padding:10px 14px;border-bottom:1px solid #e8f5e9;font-size:12px;font-weight:600;color:#1a2e1a;display:flex;align-items:center;justify-content:space-between}
-.gchart-b{padding:14px}
-.prod-table{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border-radius:10px;overflow:hidden;border:1.5px solid #d0e8d0}
-.prod-table th{text-align:left;font-size:10px;font-weight:700;color:#5a8a60;padding:8px 12px;background:#f0faf0;border-bottom:1px solid #d0e8d0;text-transform:uppercase;letter-spacing:.05em}
-.prod-table th.r,.prod-table td.r{text-align:right}
-.prod-table td{padding:9px 12px;border-top:1px solid #f0faf0;color:#1a2e1a}
-.rel-ctrl{display:flex;flex-wrap:wrap;gap:10px;align-items:flex-end;margin-bottom:18px;padding:14px;background:#fff;border-radius:10px;border:1.5px solid #d0e8d0}
-.rel-fld{display:flex;flex-direction:column;gap:5px}
-.rel-lbl{font-size:10px;font-weight:700;color:#5a8a60;text-transform:uppercase;letter-spacing:.05em}
-.sel{background:#fff;color:#1a2e1a;border:1.5px solid #d0e8d0;border-radius:6px;padding:6px 10px;font-size:13px;cursor:pointer}
-.sel:focus{outline:none;border-color:#22B04B}
-.btn{padding:7px 16px;border-radius:7px;font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid #d0e8d0;background:#fff;color:#1a2e1a;transition:all .15s}
-.btn:hover{border-color:#22B04B;color:#22B04B}
-.btn-g{background:#22B04B;color:#fff;border-color:#22B04B}
-.btn-g:hover{background:#1a8f3a}
-.btn-sm{padding:5px 10px;font-size:11px}
-#rel-card{background:#fff;border:1.5px solid #d0e8d0;border-radius:12px;padding:24px;max-width:720px}
-.rel-h{display:flex;justify-content:space-between;align-items:flex-start;padding-bottom:14px;border-bottom:1px solid #d0e8d0;margin-bottom:16px}
-.rel-av{width:46px;height:46px;border-radius:50%;background:#e8f5e9;display:flex;align-items:center;justify-content:center;font-size:15px;font-weight:700;color:#22B04B;border:2px solid #a5d6a7}
-.rel-name{font-size:16px;font-weight:700;color:#1a2e1a}
-.rel-sub{font-size:12px;color:#5a8a60;margin-top:2px}
-.rel-kpis{display:grid;grid-template-columns:repeat(4,1fr);gap:8px;margin-bottom:16px}
-.rel-kpi{background:#f0faf0;border-radius:7px;padding:9px 10px;border:1px solid #d0e8d0}
-.rel-day{border:1px solid #e8f5e9;border-radius:6px;padding:8px 12px;display:flex;align-items:center;gap:10px;margin-bottom:6px}
-.rel-lt{width:100%;border-collapse:collapse;font-size:12px;margin-bottom:16px}
-.rel-lt th{padding:5px 8px;font-size:10px;font-weight:700;color:#5a8a60;text-transform:uppercase;border-bottom:1px solid #d0e8d0}
-.rel-lt th.r,.rel-lt td.r{text-align:right}
-.rel-lt td{padding:7px 8px;border-top:1px solid #f0f0f0;color:#1a2e1a}
-/* MODAL ADMIN */
-.modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;align-items:center;justify-content:center}
-.modal-overlay.open{display:flex}
-.modal{background:#fff;border-radius:14px;padding:28px;max-width:700px;width:95%;max-height:90vh;overflow-y:auto;border-top:4px solid #22B04B}
-.modal-h{display:flex;justify-content:space-between;align-items:center;margin-bottom:20px}
-.modal-title{font-size:16px;font-weight:700;color:#1a2e1a;display:flex;align-items:center;gap:8px}
-.admin-tabs{display:flex;gap:0;border-bottom:2px solid #e8f5e9;margin-bottom:16px}
-.admin-tab{padding:7px 16px;font-size:12px;font-weight:600;cursor:pointer;color:#5a8a60;border-bottom:2px solid transparent;margin-bottom:-2px}
-.admin-tab.active{color:#22B04B;border-bottom-color:#22B04B}
-.admin-panel{display:none}.admin-panel.active{display:block}
-.field-row{display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid #f0faf0}
-.field-row:last-child{border-bottom:none}
-.field-label{font-size:12px;color:#1a2e1a;flex:1}
-.field-sub{font-size:10px;color:#5a8a60}
-.inp{background:#f9fef9;border:1.5px solid #d0e8d0;border-radius:6px;padding:5px 9px;font-size:13px;color:#1a2e1a;text-align:center}
-.inp:focus{outline:none;border-color:#22B04B}
-.inp-w{width:70px}
-.inp-pw{width:120px;text-align:left}
-.inp-full{width:100%;text-align:left}
-.tag-turno{font-size:10px;font-weight:500;padding:2px 7px;border-radius:4px;background:#e8f5e9;color:#1a6b3a;white-space:nowrap}
-.just-item{padding:12px;background:#fff;border:1px solid #e8f5e9;border-radius:8px;margin-bottom:8px}
-.just-item.pending{border-color:#ffe082}
-.motivo-item{display:flex;align-items:center;gap:8px;padding:6px 0;border-bottom:1px solid #f0faf0}
-.motivo-item:last-child{border-bottom:none}
-/* LOGIN INSPETOR */
-.login-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:999;align-items:center;justify-content:center}
-.login-overlay.open{display:flex}
-.login-box{background:#fff;border-radius:14px;padding:28px;max-width:360px;width:95%;text-align:center;border-top:4px solid #22B04B}
-/* RANKING */
-.podium{display:flex;align-items:flex-end;justify-content:center;gap:10px;margin-bottom:20px}
-.podium-item{display:flex;flex-direction:column;align-items:center;gap:5px}
-.podium-base{border-radius:6px 6px 0 0;display:flex;align-items:center;justify-content:center;width:60px}
-@media(max-width:600px){.kpi-grid{grid-template-columns:repeat(2,1fr)}.cards-grid{grid-template-columns:1fr}.g2,.g3{grid-template-columns:1fr}.rel-kpis{grid-template-columns:repeat(2,1fr)}}
-</style>
-</head>
-<body>
-
-<div class="top-bar">
-  <img src="data:image/jpeg;base64,/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAUDBAQEAwUEBAQFBQUGBwwIBwcHBw8LCwkMEQ8SEhEPERETFhwXExQaFRERGCEYGh0dHx8fExciJCIeJBweHx7/2wBDAQUFBQcGBw4ICA4eFBEUHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh4eHh7/wAARCAH0AfQDASIAAhEBAxEB/8QAHwAAAQUBAQEBAQEAAAAAAAAAAAECAwQFBgcICQoL/8QAtRAAAgEDAwIEAwUFBAQAAAF9AQIDAAQRBRIhMUEGE1FhByJxFDKBkaEII0KxwRVS0fAkM2JyggkKFhcYGRolJicoKSo0NTY3ODk6Q0RFRkdISUpTVFVWV1hZWmNkZWZnaGlqc3R1dnd4eXqDhIWGh4iJipKTlJWWl5iZmqKjpKWmp6ipqrKztLW2t7i5usLDxMXGx8jJytLT1NXW19jZ2uHi4+Tl5ufo6erx8vP09fb3+Pn6/8QAHwEAAwEBAQEBAQEBAQAAAAAAAAECAwQFBgcICQoL/8QAtREAAgECBAQDBAcFBAQAAQJ3AAECAxEEBSExBhJBUQdhcRMiMoEIFEKRobHBCSMzUvAVYnLRChYkNOEl8RcYGRomJygpKjU2Nzg5OkNERUZHSElKU1RVVldYWVpjZGVmZ2hpanN0dXZ3eHl6goOEhYaHiImKkpOUlZaXmJmaoqOkpaanqKmqsrO0tba3uLm6wsPExcbHyMnK0tPU1dbX2Nna4uPk5ebn6Onq8vP09fb3+Pn6/9oADAMBAAIRAxEAPwD7LooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAoqpqmp6fpVqbrUr23s4B1eaQIP1rgNb+NPhCxZksjeam46GCLamf958foDUynGO7OPFZhhsIv31RR9Xr9256VRXhd78e5y2LPw1Gq9jNdkn8gtVF+PGs7hu0DTyO4Ezis/bw7nky4qytO3tPwf+R7/RXien/HuEkDUPDcqDu1vchv0YD+ddjoPxZ8FasyxtqLafK2AEvI/LH/fXK/rVKrB7M68Pn2XYh2hVV/PT87Hd0UyCaKeJZoJEljcZV0YEEexFPrQ9dO4UUUUAFFc3468c+F/BViLrxFqsVqXGYoR880v+6g5P16Dua8M8Q/tSYuGTw/4U3wg8S31ztZh/uIDj/vo1LmlucmIx1DDu1SVmfS9FfP8A8Pf2ldK1XUotO8V6UNGMrBUvIpjJACem8EAoPfkDvgc17+jK6hkYMpGQQcgimpKWxeHxVLER5qbuLRRRTOgKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiquq6hZaVp0+oahcJb2sC75JHPCj/H270ClJRTbdkie4mht4HnuJUiijUs7uwVVA6kk9BXjHxA+NSRPJYeEY0lYfKb+VcqP9xT1+p49jXDfFL4i6h4vu3tLcyWujRt+6t84aXHRpPU+i9B7nmuErjqV29In51nXFk5ydHBOy/m6v07eu/oXNY1XUdYvGvNUvZ7y4b+OZyxHsOwHsKp0VZ03T7/AFO4Fvp1lc3kx/ggiLn9K59WfFNzqz6tv5tlaiu5074T+OrxA/8AZC2ynp9ouEQ/kCT+laJ+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oooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACqGu6NpWuWLWWrWMF5Af4ZFzg+oPUH3FX6KNyZwjOLjJXTPE/FfwLRmefwzqfl55FteZI+gkHP5g/WvNtb+HvjLSGb7VoF3Ig/5aW6+cv5pkj8RX1rRWEsPF7aHzGM4RwGIfNC8H5bfc/0sfEk8UsDmOeN4nHVZFKkfgaj3L/eX86+2p7eCcYnhjlHo6Bv51U/sTRv+gTYf+Ayf4Vn9W8zx5cDyv7tb/wAl/wCCfGkEUs7hII3lc9FjUsT+ArqdC+HPjPWGU2+hXMEZ/wCWt0PJUD1+bk/gDX1bBbwQDEEMcQ9EQL/KpapYZdWdGH4Ioxd61Vv0Vv8AM8c8I/A6xtnS48S35vXBz9mt8pF9Cx+Zh9Ntet6bYWWm2cdnp9rDa28YwkUSBVH4CrFFbxhGOx9VgcswuBjahC3n1+8KKKKo7znPH3grw9440Y6Zr9isyDJhmX5ZYG/vI3UH26HuDXyD8Wfgz4n8DXL3MMMur6KSTHe28RJjHpKoyVPv90+o6V9w0VEoKR5+Ny6li1eWj7n5zeGfDuueJdUj03QtLub+5kONsSHC+7N0Ue5IFfd3wk8Ir4H8Bab4eMqzTwqXuZV6PK5LOR7ZOB7AV1McccYIRFUE5O0YzTqUIcpnl+Vwwbcr3bCiiitD1AooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooAKKKKACiiigAooooA//9k=" class="logo-cq" alt="CQ">
-  <div class="top-center">
-    <h1>KPI · Inspetores · Linha de Montagem Final</h1>
-    <p>Controle de Qualidade · Performance por inspetor, produto e linha</p>
-  </div>
-  <div class="top-right">
-    <img src="data:image/jpeg;base64,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" class="logo-z" alt="Zagonel">
-    <button class="btn-admin" onclick="openAdmin()" title="Administrador">⚙</button>
-  </div>
+body{background:#f4f6f4;color:#1a2e1a;font-family:-apple-system,sans-serif;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.box{background:#fff;border:1.5px solid #d0e8d0;border-radius:16px;padding:40px;max-width:480px;width:100%;text-align:center;box-shadow:0 4px 20px rgba(34,176,75,.08)}
+h1{font-size:20px;font-weight:700;color:#1a2e1a;margin-bottom:6px}
+p{font-size:13px;color:#5a8a60;margin-bottom:24px}
+input[type=file]{display:none}
+.ua{border:2px dashed #d0e8d0;border-radius:10px;padding:32px;cursor:pointer;margin-bottom:16px;transition:all .2s;background:#f9fef9}
+.ua:hover,.ua.drag{border-color:#22B04B;background:#f0faf0}
+.ul{font-size:14px;color:#5a8a60}.ul span{color:#22B04B;font-weight:600}
+button{background:#22B04B;color:#fff;border:none;padding:12px 32px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer;width:100%;transition:background .15s}
+button:hover{background:#1a8f3a}
+button:disabled{background:#d0e8d0;color:#a0c0a0;cursor:not-allowed}
+.st{margin-top:16px;font-size:13px;padding:12px;border-radius:8px;display:none;line-height:1.5}
+.st.ok{background:#e8f5e9;color:#1a6b3a;border:1px solid #a5d6a7;display:block}
+.st.err{background:#fff3e0;color:#e65100;border:1px solid #ffcc80;display:block}
+.st.loading{background:#f0faf0;color:#3a6e3a;border:1px solid #d0e8d0;display:block}
+.fn{font-size:12px;color:#22B04B;margin-bottom:12px;font-weight:500}
+a{display:inline-block;margin-top:16px;font-size:12px;color:#5a8a60;text-decoration:none}
+a:hover{color:#22B04B}
+.progress{height:4px;background:#e8f5e9;border-radius:2px;overflow:hidden;margin-top:8px;display:none}
+.progress-fill{height:100%;background:#22B04B;border-radius:2px;width:0%;transition:width .3s}
+</style></head>
+<body><div class="box">
+<h1>- Upload de Dados</h1>
+<p>Faz upload do arquivo .xlsx exportado do sistema</p>
+<div class="ua" id="da" onclick="document.getElementById('fi').click()">
+  <input type="file" id="fi" accept=".xlsx" onchange="hf(this.files[0])">
+  <div class="ul">Clica ou arrasta o arquivo <span>.xlsx</span> aqui</div>
 </div>
-
-<!-- MODAL ADMIN -->
-<div class="modal-overlay" id="adminOverlay">
-  <div class="modal">
-    <div class="modal-h">
-      <div class="modal-title">⚙ Painel Administrador</div>
-      <button onclick="closeAdmin()" style="background:none;border:none;cursor:pointer;font-size:20px;color:#9e9e9e">✕</button>
-    </div>
-    <div id="admin-login" style="display:flex;flex-direction:column;gap:12px;max-width:280px;margin:0 auto;padding:20px 0">
-      <div style="text-align:center;font-size:13px;color:#5a8a60;margin-bottom:8px">Digite a senha de administrador</div>
-      <input type="password" id="admin-pw-input" class="inp inp-full" placeholder="Senha" onkeydown="if(event.key==='Enter')checkAdmin()">
-      <button class="btn btn-g" onclick="checkAdmin()">Entrar</button>
-      <div id="admin-pw-err" style="color:#e65100;font-size:12px;text-align:center;display:none">Senha incorreta</div>
-    </div>
-    <div id="admin-content" style="display:none">
-      <div class="admin-tabs">
-        <div class="admin-tab active" onclick="setAdminTab('metas')">Metas</div>
-        <div class="admin-tab" onclick="setAdminTab('params')">Parâmetros</div>
-        <div class="admin-tab" onclick="setAdminTab('motivos')">Motivos</div>
-        <div class="admin-tab" onclick="setAdminTab('acessos')">Colaboradores</div>
-        <div class="admin-tab" onclick="setAdminTab('justadmin')">Justificativas</div>
-        <div class="admin-tab" onclick="setAdminTab('senha')">Minha senha</div>
-      </div>
-      <div id="ap-metas" class="admin-panel active"></div>
-      <div id="ap-params" class="admin-panel"></div>
-      <div id="ap-motivos" class="admin-panel"></div>
-      <div id="ap-acessos" class="admin-panel"></div>
-      <div id="ap-justadmin" class="admin-panel"></div>
-      <div id="ap-senha" class="admin-panel"></div>
-    </div>
-  </div>
+<div class="fn" id="fn"></div>
+<button id="btn" onclick="go()" disabled>Enviar e atualizar dashboard</button>
+<div class="progress" id="prog"><div class="progress-fill" id="prog-fill"></div></div>
+<div class="st" id="st"></div>
+<a href="/">- Ver dashboard</a>
 </div>
-
-<!-- LOGIN INSPETOR (justificativa) -->
-<div class="login-overlay" id="inspLogin">
-  <div class="login-box">
-    <div style="font-size:16px;font-weight:700;color:#1a2e1a;margin-bottom:4px">Justificar resultado</div>
-    <div style="font-size:12px;color:#5a8a60;margin-bottom:16px">Acesso individual do inspetor</div>
-    <div style="display:flex;flex-direction:column;gap:10px;text-align:left">
-      <div>
-        <div style="font-size:11px;font-weight:600;color:#5a8a60;margin-bottom:4px">Colaborador</div>
-        <select id="insp-login-sel" class="sel" style="width:100%"><option value="">Seleciona...</option></select>
-      </div>
-      <div>
-        <div style="font-size:11px;font-weight:600;color:#5a8a60;margin-bottom:4px">Senha</div>
-        <input type="password" id="insp-login-pw" class="inp inp-full" placeholder="••••••" onkeydown="if(event.key==='Enter')checkInspLogin()">
-      </div>
-      <div id="insp-login-err" style="color:#e65100;font-size:12px;display:none">Senha incorreta</div>
-      <button class="btn btn-g" onclick="checkInspLogin()">Entrar</button>
-      <button onclick="closeInspLogin()" style="background:none;border:none;color:#5a8a60;font-size:12px;cursor:pointer">Cancelar</button>
-    </div>
-  </div>
-</div>
-
-<!-- MODAL JUSTIFICATIVA DO INSPETOR -->
-<div class="modal-overlay" id="justModal">
-  <div class="modal" style="max-width:420px">
-    <div class="modal-h">
-      <div class="modal-title" id="just-modal-title">Justificar resultado</div>
-      <button onclick="closeJust()" style="background:none;border:none;cursor:pointer;font-size:20px;color:#9e9e9e">✕</button>
-    </div>
-    <div id="just-modal-body"></div>
-  </div>
-</div>
-
-<!-- MODAL RELATÓRIO INDIVIDUAL -->
-<div class="modal-overlay" id="relOverlay">
-  <div class="modal" style="max-width:780px">
-    <div class="modal-h">
-      <div class="modal-title">📋 Relatório Individual</div>
-      <button onclick="closeRelatorio()" style="background:none;border:none;cursor:pointer;font-size:20px;color:#9e9e9e">✕</button>
-    </div>
-    <div id="rel-modal-content"></div>
-  </div>
-</div>
-
-<div class="dash">
-  <div id="main-content"><div style="text-align:center;padding:60px;color:#5a8a60">⏳ Carregando dados...</div></div>
-</div>
-
-<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 <script>
-let D=null, day, subTab='inspetores', mainTab='dashboard', selInsp=new Set(), selTurno=new Set();
-let CFG={adminPw:'Zagonel@2026', threshSuper:95, threshAtinge:85, motivos:['Falta de material','Manutenção de equipamento','Absenteísmo','Treinamento / integração','Problema no processo','Outro'], acessos:{}, metas:{}, metaVig:{}};
-let inspLogado=null, chartInstances={};
+let f=null;
+const da=document.getElementById('da');
+da.addEventListener('dragover',e=>{e.preventDefault();da.classList.add('drag')});
+da.addEventListener('dragleave',()=>da.classList.remove('drag'));
+da.addEventListener('drop',e=>{e.preventDefault();da.classList.remove('drag');hf(e.dataTransfer.files[0])});
+function hf(x){
+  if(!x||!x.name.endsWith('.xlsx')){ss('Apenas arquivos .xlsx s-o aceitos.','err');return;}
+  f=x;
+  document.getElementById('fn').textContent='- '+x.name+' ('+Math.round(x.size/1024)+'KB)';
+  document.getElementById('btn').disabled=false;
+}
+function ss(m,t){const s=document.getElementById('st');s.innerHTML=m;s.className='st '+t;}
+function setProgress(p){
+  const prog=document.getElementById('prog');
+  prog.style.display='block';
+  document.getElementById('prog-fill').style.width=p+'%';
+}
 
-const TURNOS={'15h00':['Ketlin','Iliane','Andris','Yenire','Marta'],'05h20':['Yorjelis','Thalia','Caroline','Andrea','Eliandra'],'07h12':['Alicia','Marianny','Ana Paula','Karen']};
-const TURNO_COR={'15h00':'#EDE7F6','05h20':'#E3F2FD','07h12':'#FFF8E1'};
-const TURNO_FG={'15h00':'#4527A0','05h20':'#0D47A1','07h12':'#E65100'};
-const AV_COLORS=[['#e8f5e9','#1a6b3a'],['#e3f2fd','#0d47a1'],['#fce4ec','#880e4f'],['#fff3e0','#e65100'],['#f3e5f5','#4a148c'],['#e0f7fa','#006064'],['#f9fbe7','#33691e'],['#ede7f6','#311b92'],['#fff8e1','#f57f17'],['#fbe9e7','#bf360c'],['#e8eaf6','#1a237e'],['#e0f2f1','#004d40'],['#e1f5fe','#01579b'],['#f3e5f5','#6a1b9a']];
-const BC=s=>s==='SUPEROU'?'#22B04B':s==='ATINGIU'?'#4CAF50':'#e65100';
-const BCls=s=>s==='SUPEROU'?'bs':s==='ATINGIU'?'ba':s==='NAO_ATINGIU'?'bn':'babs';
-const BTxt=s=>s==='SUPEROU'?'✓ Superou':s==='ATINGIU'?'● Atingiu':s==='NAO_ATINGIU'?'✕ Não atingiu':'Sem dados';
-const W=v=>Math.min(v,130)/1.3;
-const ini=n=>{const p=n.split(' ');return(p[0][0]+(p[p.length-1][0]||'')).toUpperCase();};
-const getTurno=n=>{for(const[t,a]of Object.entries(TURNOS))if(a.some(x=>n.includes(x)))return t;return'—';};
-const getStatus=p=>p>=CFG.threshSuper/100?'SUPEROU':p>=CFG.threshAtinge/100?'ATINGIU':'NAO_ATINGIU';
+async function go(){
+  if(!f)return;
+  document.getElementById('btn').disabled=true;
+  setProgress(10);
+  ss('- Acordando servidor...','loading');
 
-// ── CONFIG PERSISTENCE ──
-function saveCfg(){try{localStorage.setItem('zag_cfg',JSON.stringify(CFG));}catch(e){}}
-function loadCfg(){try{const s=localStorage.getItem('zag_cfg');if(s){const c=JSON.parse(s);Object.assign(CFG,c);}}catch(e){}}
-
-// ── DATA ──
-const FALLBACK_DATA={"inspetores":[{"nome":"Alicia Isabel Brito Campos","dias":{"05/05":{"total":72,"meta":72,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"06/05":{"total":72,"meta":72,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"07/05":{"total":72,"meta":72,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"08/05":{"total":60,"meta":72,"pct":83.3,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA DUCALI","total":60,"meta":72,"pct":83.3,"status":"NAO_ATINGIU"}]},"11/05":{"total":142,"meta":216,"pct":65.7,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA DUCALI","total":22,"meta":72,"pct":30.6,"status":"NAO_ATINGIU"},{"label":"LUNA","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"MOMENT 4T — Linha 01","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]},"12/05":{"total":152,"meta":216,"pct":70.4,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA DUCALI","total":24,"meta":72,"pct":33.3,"status":"NAO_ATINGIU"},{"label":"LUNA","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"MOMENT 4T — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"}]},"13/05":{"total":112,"meta":288,"pct":38.9,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA DUCALI","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"},{"label":"LUNA","total":48,"meta":72,"pct":66.7,"status":"NAO_ATINGIU"},{"label":"MOMENT 4T — Linha 01","total":40,"meta":72,"pct":55.6,"status":"NAO_ATINGIU"},{"label":"MOMENT 4T — Linha 02","total":8,"meta":72,"pct":11.1,"status":"NAO_ATINGIU"}]},"14/05":{"total":128,"meta":144,"pct":88.9,"status":"ATINGIU","linhas":[{"label":"LUNA","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"MOMENT 4T — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"}]},"15/05":{"total":128,"meta":144,"pct":88.9,"status":"ATINGIU","linhas":[{"label":"LUNA","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"MOMENT 4T — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"}]},"16/05":null,"18/05":{"total":128,"meta":144,"pct":88.9,"status":"ATINGIU","linhas":[{"label":"LUNA","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"MOMENT 4T — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"}]},"19/05":{"total":144,"meta":216,"pct":66.7,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA DUCALI","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"},{"label":"LUNA","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"MOMENT 4T — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"}]},"20/05":{"total":126,"meta":72,"pct":175.0,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":126,"meta":72,"pct":175.0,"status":"SUPEROU"}]}}},{"nome":"Ana Paula Cardoso","dias":{"05/05":{"total":187,"meta":150,"pct":124.7,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":187,"meta":150,"pct":124.7,"status":"SUPEROU"}]},"06/05":{"total":157,"meta":150,"pct":104.7,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":157,"meta":150,"pct":104.7,"status":"SUPEROU"}]},"07/05":{"total":171,"meta":150,"pct":114.0,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":171,"meta":150,"pct":114.0,"status":"SUPEROU"}]},"08/05":{"total":174,"meta":150,"pct":116.0,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":174,"meta":150,"pct":116.0,"status":"SUPEROU"}]},"11/05":{"total":30,"meta":150,"pct":20.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":30,"meta":150,"pct":20.0,"status":"NAO_ATINGIU"}]},"12/05":{"total":92,"meta":150,"pct":61.3,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":92,"meta":150,"pct":61.3,"status":"NAO_ATINGIU"}]},"13/05":{"total":121,"meta":150,"pct":80.7,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":121,"meta":150,"pct":80.7,"status":"NAO_ATINGIU"}]},"14/05":{"total":105,"meta":150,"pct":70.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":105,"meta":150,"pct":70.0,"status":"NAO_ATINGIU"}]},"15/05":{"total":156,"meta":150,"pct":104.0,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":156,"meta":150,"pct":104.0,"status":"SUPEROU"}]},"16/05":{"total":44,"meta":72,"pct":61.1,"status":"NAO_ATINGIU","linhas":[{"label":"PRIMA","total":44,"meta":72,"pct":61.1,"status":"NAO_ATINGIU"}]},"18/05":{"total":135,"meta":150,"pct":90.0,"status":"ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":135,"meta":150,"pct":90.0,"status":"ATINGIU"}]},"19/05":{"total":144,"meta":150,"pct":96.0,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":144,"meta":150,"pct":96.0,"status":"SUPEROU"}]},"20/05":{"total":124,"meta":150,"pct":82.7,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":124,"meta":150,"pct":82.7,"status":"NAO_ATINGIU"}]}}},{"nome":"Andrea Jussara da Silva","dias":{"05/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"PRIMA","total":144,"meta":144,"pct":100.0,"status":"SUPEROU"}]},"06/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"PRIMA","total":144,"meta":144,"pct":100.0,"status":"SUPEROU"}]},"07/05":{"total":168,"meta":216,"pct":77.8,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 04","total":24,"meta":72,"pct":33.3,"status":"NAO_ATINGIU"},{"label":"PRIMA","total":144,"meta":144,"pct":100.0,"status":"SUPEROU"}]},"08/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"PRIMA","total":144,"meta":144,"pct":100.0,"status":"SUPEROU"}]},"11/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"PRIMA","total":144,"meta":144,"pct":100.0,"status":"SUPEROU"}]},"12/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"PRIMA","total":144,"meta":144,"pct":100.0,"status":"SUPEROU"}]},"13/05":{"total":128,"meta":144,"pct":88.9,"status":"ATINGIU","linhas":[{"label":"PRIMA","total":128,"meta":144,"pct":88.9,"status":"ATINGIU"}]},"14/05":{"total":104,"meta":144,"pct":72.2,"status":"NAO_ATINGIU","linhas":[{"label":"PRIMA","total":104,"meta":144,"pct":72.2,"status":"NAO_ATINGIU"}]},"15/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"PRIMA","total":144,"meta":144,"pct":100.0,"status":"SUPEROU"}]},"16/05":null,"18/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"PRIMA","total":144,"meta":144,"pct":100.0,"status":"SUPEROU"}]},"19/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"PRIMA","total":144,"meta":144,"pct":100.0,"status":"SUPEROU"}]},"20/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"PRIMA","total":144,"meta":144,"pct":100.0,"status":"SUPEROU"}]}}},{"nome":"Andris Antonio Rivero Romero","dias":{"05/05":{"total":140,"meta":180,"pct":77.8,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":28,"meta":36,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]},"06/05":{"total":144,"meta":252,"pct":57.1,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA","total":24,"meta":72,"pct":33.3,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":44,"meta":72,"pct":61.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":28,"meta":36,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":48,"meta":72,"pct":66.7,"status":"NAO_ATINGIU"}]},"07/05":{"total":100,"meta":180,"pct":55.6,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":40,"meta":72,"pct":55.6,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":20,"meta":36,"pct":55.6,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":40,"meta":72,"pct":55.6,"status":"NAO_ATINGIU"}]},"08/05":{"total":140,"meta":180,"pct":77.8,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":28,"meta":36,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]},"11/05":{"total":140,"meta":180,"pct":77.8,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":28,"meta":36,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]},"12/05":{"total":132,"meta":180,"pct":73.3,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":52,"meta":72,"pct":72.2,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":32,"meta":36,"pct":88.9,"status":"ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":48,"meta":72,"pct":66.7,"status":"NAO_ATINGIU"}]},"13/05":{"total":140,"meta":180,"pct":77.8,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":28,"meta":36,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]},"14/05":{"total":140,"meta":180,"pct":77.8,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":28,"meta":36,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]},"15/05":{"total":148,"meta":252,"pct":58.7,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":8,"meta":72,"pct":11.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":28,"meta":36,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]},"16/05":null,"18/05":null,"19/05":{"total":190,"meta":324,"pct":58.6,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA","total":86,"meta":72,"pct":119.4,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 01","total":12,"meta":72,"pct":16.7,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":28,"meta":36,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"}]},"20/05":{"total":140,"meta":180,"pct":77.8,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":28,"meta":36,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]}}},{"nome":"Caroline Vanessa Schmitz","dias":{"05/05":{"total":162,"meta":288,"pct":56.2,"status":"NAO_ATINGIU","linhas":[{"label":"LUNA","total":58,"meta":72,"pct":80.6,"status":"NAO_ATINGIU"},{"label":"MOMENT 4T","total":60,"meta":72,"pct":83.3,"status":"NAO_ATINGIU"},{"label":"MOMENT 4T — Linha 02","total":36,"meta":72,"pct":50.0,"status":"NAO_ATINGIU"},{"label":"MOMENT 4T — Linha 04","total":8,"meta":72,"pct":11.1,"status":"NAO_ATINGIU"}]},"06/05":{"total":324,"meta":144,"pct":225.0,"status":"SUPEROU","linhas":[{"label":"LUNA","total":36,"meta":72,"pct":50.0,"status":"NAO_ATINGIU"},{"label":"MOMENT 4T","total":288,"meta":72,"pct":400.0,"status":"SUPEROU"}]},"07/05":{"total":248,"meta":216,"pct":114.8,"status":"SUPEROU","linhas":[{"label":"LUNA","total":60,"meta":72,"pct":83.3,"status":"NAO_ATINGIU"},{"label":"MOMENT 4T","total":148,"meta":72,"pct":205.6,"status":"SUPEROU"},{"label":"MOMENT 4T — Linha 02","total":40,"meta":72,"pct":55.6,"status":"NAO_ATINGIU"}]},"08/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"LUNA","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"},{"label":"MOMENT 4T — Linha 02","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"11/05":null,"12/05":null,"13/05":null,"14/05":null,"15/05":null,"16/05":null,"18/05":null,"19/05":null,"20/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"LUNA","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"},{"label":"MOMENT 4T — Linha 02","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]}}},{"nome":"Eliandra","dias":{"05/05":{"total":104,"meta":150,"pct":69.3,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":104,"meta":150,"pct":69.3,"status":"NAO_ATINGIU"}]},"06/05":{"total":95,"meta":150,"pct":63.3,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":95,"meta":150,"pct":63.3,"status":"NAO_ATINGIU"}]},"07/05":{"total":119,"meta":150,"pct":79.3,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":119,"meta":150,"pct":79.3,"status":"NAO_ATINGIU"}]},"08/05":{"total":88,"meta":150,"pct":58.7,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":88,"meta":150,"pct":58.7,"status":"NAO_ATINGIU"}]},"11/05":{"total":179,"meta":150,"pct":119.3,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":179,"meta":150,"pct":119.3,"status":"SUPEROU"}]},"12/05":{"total":157,"meta":150,"pct":104.7,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":157,"meta":150,"pct":104.7,"status":"SUPEROU"}]},"13/05":{"total":192,"meta":150,"pct":128.0,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":192,"meta":150,"pct":128.0,"status":"SUPEROU"}]},"14/05":{"total":113,"meta":150,"pct":75.3,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":113,"meta":150,"pct":75.3,"status":"NAO_ATINGIU"}]},"15/05":{"total":99,"meta":150,"pct":66.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":99,"meta":150,"pct":66.0,"status":"NAO_ATINGIU"}]},"16/05":{"total":69,"meta":150,"pct":46.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":69,"meta":150,"pct":46.0,"status":"NAO_ATINGIU"}]},"18/05":{"total":183,"meta":150,"pct":122.0,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":183,"meta":150,"pct":122.0,"status":"SUPEROU"}]},"19/05":{"total":131,"meta":150,"pct":87.3,"status":"ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":131,"meta":150,"pct":87.3,"status":"ATINGIU"}]},"20/05":{"total":135,"meta":150,"pct":90.0,"status":"ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":135,"meta":150,"pct":90.0,"status":"ATINGIU"}]}}},{"nome":"Iliane Oliveira","dias":{"05/05":{"total":246,"meta":150,"pct":164.0,"status":"SUPEROU","linhas":[{"label":"MOMENT 4T","total":246,"meta":150,"pct":164.0,"status":"SUPEROU"}]},"06/05":{"total":250,"meta":150,"pct":166.7,"status":"SUPEROU","linhas":[{"label":"MOMENT 4T","total":250,"meta":150,"pct":166.7,"status":"SUPEROU"}]},"07/05":{"total":60,"meta":150,"pct":40.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":60,"meta":150,"pct":40.0,"status":"NAO_ATINGIU"}]},"08/05":{"total":100,"meta":150,"pct":66.7,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":100,"meta":150,"pct":66.7,"status":"NAO_ATINGIU"}]},"11/05":{"total":150,"meta":150,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":150,"meta":150,"pct":100.0,"status":"SUPEROU"}]},"12/05":{"total":240,"meta":150,"pct":160.0,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":240,"meta":150,"pct":160.0,"status":"SUPEROU"}]},"13/05":{"total":180,"meta":150,"pct":120.0,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":180,"meta":150,"pct":120.0,"status":"SUPEROU"}]},"14/05":{"total":90,"meta":150,"pct":60.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":90,"meta":150,"pct":60.0,"status":"NAO_ATINGIU"}]},"15/05":{"total":135,"meta":150,"pct":90.0,"status":"ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":135,"meta":150,"pct":90.0,"status":"ATINGIU"}]},"16/05":{"total":80,"meta":144,"pct":55.6,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":40,"meta":72,"pct":55.6,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":40,"meta":72,"pct":55.6,"status":"NAO_ATINGIU"}]},"18/05":{"total":196,"meta":216,"pct":90.7,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":68,"meta":72,"pct":94.4,"status":"ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"}]},"19/05":{"total":106,"meta":216,"pct":49.1,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA DUCALI","total":44,"meta":72,"pct":61.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA","total":30,"meta":72,"pct":41.7,"status":"NAO_ATINGIU"},{"label":"PRIMA","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"}]},"20/05":{"total":136,"meta":144,"pct":94.4,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"PRIMA","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]}}},{"nome":"Karen Amanda Rojas Kuhn","dias":{"05/05":{"total":64,"meta":144,"pct":44.4,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"DUCHA MOVE BLINDADA","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"}]},"06/05":{"total":64,"meta":144,"pct":44.4,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"DUCHA MOVE BLINDADA","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"}]},"07/05":{"total":64,"meta":144,"pct":44.4,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"DUCHA MOVE BLINDADA","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"}]},"08/05":{"total":64,"meta":144,"pct":44.4,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"DUCHA MOVE BLINDADA","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"}]},"11/05":{"total":64,"meta":216,"pct":29.6,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"},{"label":"DUCHA MOVE BLINDADA","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"DUCHA SUBLIME","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"}]},"12/05":{"total":64,"meta":144,"pct":44.4,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE BLINDADA","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"DUCHA SUBLIME","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"}]},"13/05":{"total":64,"meta":216,"pct":29.6,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE","total":8,"meta":72,"pct":11.1,"status":"NAO_ATINGIU"},{"label":"DUCHA MOVE BLINDADA","total":24,"meta":72,"pct":33.3,"status":"NAO_ATINGIU"},{"label":"DUCHA SUBLIME","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"}]},"14/05":{"total":36,"meta":216,"pct":16.7,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE BLINDADA","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"},{"label":"DUCHA SUBLIME","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"},{"label":"PRIMA","total":4,"meta":72,"pct":5.6,"status":"NAO_ATINGIU"}]},"15/05":{"total":96,"meta":144,"pct":66.7,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE BLINDADA","total":48,"meta":72,"pct":66.7,"status":"NAO_ATINGIU"},{"label":"DUCHA SUBLIME","total":48,"meta":72,"pct":66.7,"status":"NAO_ATINGIU"}]},"16/05":null,"18/05":{"total":64,"meta":144,"pct":44.4,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA SUBLIME","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"DUCHA SUBLIME BLINDADA","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"}]},"19/05":{"total":64,"meta":216,"pct":29.6,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"DUCHA SUBLIME","total":8,"meta":72,"pct":11.1,"status":"NAO_ATINGIU"},{"label":"DUCHA SUBLIME BLINDADA","total":24,"meta":72,"pct":33.3,"status":"NAO_ATINGIU"}]},"20/05":{"total":64,"meta":144,"pct":44.4,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA MOVE","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"DUCHA SUBLIME BLINDADA","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"}]}}},{"nome":"Ketlin Gomes","dias":{"05/05":{"total":136,"meta":144,"pct":94.4,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"PRIMA","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"06/05":{"total":136,"meta":144,"pct":94.4,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"PRIMA","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"07/05":{"total":128,"meta":144,"pct":88.9,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":60,"meta":72,"pct":83.3,"status":"NAO_ATINGIU"},{"label":"PRIMA","total":68,"meta":72,"pct":94.4,"status":"ATINGIU"}]},"08/05":{"total":140,"meta":144,"pct":97.2,"status":"SUPEROU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"PRIMA","total":76,"meta":72,"pct":105.6,"status":"SUPEROU"}]},"11/05":{"total":136,"meta":144,"pct":94.4,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"PRIMA","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"12/05":{"total":136,"meta":144,"pct":94.4,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"PRIMA","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"13/05":{"total":52,"meta":144,"pct":36.1,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":36,"meta":72,"pct":50.0,"status":"NAO_ATINGIU"},{"label":"PRIMA","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"}]},"14/05":{"total":132,"meta":144,"pct":91.7,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"PRIMA","total":68,"meta":72,"pct":94.4,"status":"ATINGIU"}]},"15/05":{"total":120,"meta":144,"pct":83.3,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"PRIMA","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"}]},"16/05":null,"18/05":{"total":136,"meta":144,"pct":94.4,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":64,"meta":72,"pct":88.9,"status":"ATINGIU"},{"label":"PRIMA","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"19/05":null,"20/05":null}},{"nome":"Marianny González","dias":{"05/05":{"total":72,"meta":72,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"06/05":{"total":72,"meta":72,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"07/05":{"total":72,"meta":72,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"08/05":{"total":68,"meta":72,"pct":94.4,"status":"ATINGIU","linhas":[{"label":"DUCHA DUCALI","total":68,"meta":72,"pct":94.4,"status":"ATINGIU"}]},"11/05":{"total":106,"meta":216,"pct":49.1,"status":"NAO_ATINGIU","linhas":[{"label":"DUCHA DUCALI","total":98,"meta":72,"pct":136.1,"status":"SUPEROU"},{"label":"MOMENT 4T — Linha 01","total":4,"meta":72,"pct":5.6,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 01","total":4,"meta":72,"pct":5.6,"status":"NAO_ATINGIU"}]},"12/05":{"total":134,"meta":72,"pct":186.1,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":134,"meta":72,"pct":186.1,"status":"SUPEROU"}]},"13/05":{"total":126,"meta":72,"pct":175.0,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":126,"meta":72,"pct":175.0,"status":"SUPEROU"}]},"14/05":{"total":130,"meta":72,"pct":180.6,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":130,"meta":72,"pct":180.6,"status":"SUPEROU"}]},"15/05":{"total":128,"meta":72,"pct":177.8,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":128,"meta":72,"pct":177.8,"status":"SUPEROU"}]},"16/05":{"total":48,"meta":216,"pct":22.2,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":24,"meta":72,"pct":33.3,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":20,"meta":72,"pct":27.8,"status":"NAO_ATINGIU"},{"label":"PRIMA","total":4,"meta":72,"pct":5.6,"status":"NAO_ATINGIU"}]},"18/05":{"total":120,"meta":72,"pct":166.7,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":120,"meta":72,"pct":166.7,"status":"SUPEROU"}]},"19/05":{"total":132,"meta":72,"pct":183.3,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":132,"meta":72,"pct":183.3,"status":"SUPEROU"}]},"20/05":{"total":102,"meta":72,"pct":141.7,"status":"SUPEROU","linhas":[{"label":"DUCHA DUCALI","total":102,"meta":72,"pct":141.7,"status":"SUPEROU"}]}}},{"nome":"Marta Antunes","dias":{"05/05":{"total":121,"meta":150,"pct":80.7,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":121,"meta":150,"pct":80.7,"status":"NAO_ATINGIU"}]},"06/05":{"total":120,"meta":150,"pct":80.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":120,"meta":150,"pct":80.0,"status":"NAO_ATINGIU"}]},"07/05":{"total":135,"meta":150,"pct":90.0,"status":"ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":135,"meta":150,"pct":90.0,"status":"ATINGIU"}]},"08/05":{"total":75,"meta":150,"pct":50.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":75,"meta":150,"pct":50.0,"status":"NAO_ATINGIU"}]},"11/05":{"total":111,"meta":150,"pct":74.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":111,"meta":150,"pct":74.0,"status":"NAO_ATINGIU"}]},"12/05":{"total":150,"meta":150,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":150,"meta":150,"pct":100.0,"status":"SUPEROU"}]},"13/05":{"total":120,"meta":150,"pct":80.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":120,"meta":150,"pct":80.0,"status":"NAO_ATINGIU"}]},"14/05":{"total":155,"meta":150,"pct":103.3,"status":"SUPEROU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":155,"meta":150,"pct":103.3,"status":"SUPEROU"}]},"15/05":{"total":129,"meta":150,"pct":86.0,"status":"ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":129,"meta":150,"pct":86.0,"status":"ATINGIU"}]},"16/05":null,"18/05":{"total":105,"meta":150,"pct":70.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":105,"meta":150,"pct":70.0,"status":"NAO_ATINGIU"}]},"19/05":{"total":135,"meta":150,"pct":90.0,"status":"ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":135,"meta":150,"pct":90.0,"status":"ATINGIU"}]},"20/05":{"total":118,"meta":150,"pct":78.7,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":118,"meta":150,"pct":78.7,"status":"NAO_ATINGIU"}]}}},{"nome":"Thalia Steffens","dias":{"05/05":null,"06/05":{"total":28,"meta":144,"pct":19.4,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":12,"meta":72,"pct":16.7,"status":"NAO_ATINGIU"}]},"07/05":{"total":116,"meta":216,"pct":53.7,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":46,"meta":72,"pct":63.9,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":20,"meta":72,"pct":27.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":50,"meta":72,"pct":69.4,"status":"NAO_ATINGIU"}]},"08/05":{"total":136,"meta":144,"pct":94.4,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 03","total":68,"meta":72,"pct":94.4,"status":"ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":68,"meta":72,"pct":94.4,"status":"ATINGIU"}]},"11/05":{"total":112,"meta":144,"pct":77.8,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 03","total":60,"meta":72,"pct":83.3,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":52,"meta":72,"pct":72.2,"status":"NAO_ATINGIU"}]},"12/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 03","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"13/05":null,"14/05":{"total":136,"meta":144,"pct":94.4,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 03","total":68,"meta":72,"pct":94.4,"status":"ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":68,"meta":72,"pct":94.4,"status":"ATINGIU"}]},"15/05":{"total":80,"meta":144,"pct":55.6,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 03","total":44,"meta":72,"pct":61.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":36,"meta":72,"pct":50.0,"status":"NAO_ATINGIU"}]},"16/05":null,"18/05":{"total":174,"meta":216,"pct":80.6,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":30,"meta":72,"pct":41.7,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 01","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"19/05":{"total":164,"meta":288,"pct":56.9,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":20,"meta":72,"pct":27.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]},"20/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]}}},{"nome":"Yenire","dias":{"05/05":{"total":212,"meta":366,"pct":57.9,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":112,"meta":150,"pct":74.7,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 01","total":48,"meta":72,"pct":66.7,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":44,"meta":72,"pct":61.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":8,"meta":72,"pct":11.1,"status":"NAO_ATINGIU"}]},"06/05":{"total":174,"meta":366,"pct":47.5,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":86,"meta":150,"pct":57.3,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 01","total":44,"meta":72,"pct":61.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":12,"meta":72,"pct":16.7,"status":"NAO_ATINGIU"}]},"07/05":{"total":178,"meta":366,"pct":48.6,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":138,"meta":150,"pct":92.0,"status":"ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":8,"meta":72,"pct":11.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"}]},"08/05":{"total":93,"meta":150,"pct":62.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":93,"meta":150,"pct":62.0,"status":"NAO_ATINGIU"}]},"11/05":{"total":122,"meta":150,"pct":81.3,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":122,"meta":150,"pct":81.3,"status":"NAO_ATINGIU"}]},"12/05":{"total":74,"meta":150,"pct":49.3,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":74,"meta":150,"pct":49.3,"status":"NAO_ATINGIU"}]},"13/05":{"total":95,"meta":150,"pct":63.3,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":95,"meta":150,"pct":63.3,"status":"NAO_ATINGIU"}]},"14/05":{"total":83,"meta":150,"pct":55.3,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":83,"meta":150,"pct":55.3,"status":"NAO_ATINGIU"}]},"15/05":{"total":55,"meta":150,"pct":36.7,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":55,"meta":150,"pct":36.7,"status":"NAO_ATINGIU"}]},"16/05":null,"18/05":{"total":90,"meta":150,"pct":60.0,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":90,"meta":150,"pct":60.0,"status":"NAO_ATINGIU"}]},"19/05":{"total":135,"meta":150,"pct":90.0,"status":"ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":135,"meta":150,"pct":90.0,"status":"ATINGIU"}]},"20/05":{"total":124,"meta":150,"pct":82.7,"status":"NAO_ATINGIU","linhas":[{"label":"AQUECEDOR DE PASSAGEM","total":124,"meta":150,"pct":82.7,"status":"NAO_ATINGIU"}]}}},{"nome":"Yorjelis Alejandra Garcia Palomo","dias":{"05/05":{"total":112,"meta":288,"pct":38.9,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":8,"meta":72,"pct":11.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":8,"meta":72,"pct":11.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":44,"meta":72,"pct":61.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":52,"meta":72,"pct":72.2,"status":"NAO_ATINGIU"}]},"06/05":{"total":104,"meta":216,"pct":48.1,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":36,"meta":72,"pct":50.0,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":52,"meta":72,"pct":72.2,"status":"NAO_ATINGIU"}]},"07/05":{"total":54,"meta":216,"pct":25.0,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 02","total":26,"meta":72,"pct":36.1,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":4,"meta":72,"pct":5.6,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":24,"meta":72,"pct":33.3,"status":"NAO_ATINGIU"}]},"08/05":{"total":114,"meta":144,"pct":79.2,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":58,"meta":72,"pct":80.6,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]},"11/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":96,"meta":72,"pct":133.3,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":48,"meta":72,"pct":66.7,"status":"NAO_ATINGIU"}]},"12/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"13/05":{"total":148,"meta":288,"pct":51.4,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":40,"meta":72,"pct":55.6,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":32,"meta":72,"pct":44.4,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":36,"meta":72,"pct":50.0,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":40,"meta":72,"pct":55.6,"status":"NAO_ATINGIU"}]},"14/05":{"total":132,"meta":144,"pct":91.7,"status":"ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 01","total":76,"meta":72,"pct":105.6,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"}]},"15/05":{"total":174,"meta":360,"pct":48.3,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA","total":18,"meta":72,"pct":25.0,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 01","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 02","total":56,"meta":72,"pct":77.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":12,"meta":72,"pct":16.7,"status":"NAO_ATINGIU"}]},"16/05":null,"18/05":{"total":144,"meta":144,"pct":100.0,"status":"SUPEROU","linhas":[{"label":"MOMENT ELETRÔNICA — Linha 03","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]},"19/05":{"total":342,"meta":216,"pct":158.3,"status":"SUPEROU","linhas":[{"label":"MOMENT ELETRÔNICA","total":302,"meta":72,"pct":419.4,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":24,"meta":72,"pct":33.3,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":16,"meta":72,"pct":22.2,"status":"NAO_ATINGIU"}]},"20/05":{"total":182,"meta":216,"pct":84.3,"status":"NAO_ATINGIU","linhas":[{"label":"MOMENT ELETRÔNICA","total":38,"meta":72,"pct":52.8,"status":"NAO_ATINGIU"},{"label":"MOMENT ELETRÔNICA — Linha 03","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"},{"label":"MOMENT ELETRÔNICA — Linha 04","total":72,"meta":72,"pct":100.0,"status":"SUPEROU"}]}}}],"totals_by_day":{"05/05":{"total":1772,"meta":2298,"pct":77.1,"n_superou":5,"n_atingiu":1,"n_nao":7},"06/05":{"total":1884,"meta":2298,"pct":82.0,"n_superou":6,"n_atingiu":1,"n_nao":7},"07/05":{"total":1685,"meta":2442,"pct":69.0,"n_superou":4,"n_atingiu":2,"n_nao":8},"08/05":{"total":1540,"meta":1938,"pct":79.5,"n_superou":4,"n_atingiu":2,"n_nao":8},"11/05":{"total":1580,"meta":2154,"pct":73.4,"n_superou":4,"n_atingiu":1,"n_nao":8},"12/05":{"total":1763,"meta":1938,"pct":91.0,"n_superou":7,"n_atingiu":1,"n_nao":5},"13/05":{"total":1478,"meta":2082,"pct":71.0,"n_superou":3,"n_atingiu":1,"n_nao":8},"14/05":{"total":1484,"meta":1938,"pct":76.6,"n_superou":2,"n_atingiu":4,"n_nao":7},"15/05":{"total":1592,"meta":2154,"pct":73.9,"n_superou":3,"n_atingiu":3,"n_nao":7},"16/05":{"total":241,"meta":582,"pct":41.4,"n_superou":0,"n_atingiu":0,"n_nao":4},"18/05":{"total":1619,"meta":1824,"pct":88.8,"n_superou":4,"n_atingiu":4,"n_nao":4},"19/05":{"total":1831,"meta":2292,"pct":79.9,"n_superou":4,"n_atingiu":3,"n_nao":5},"20/05":{"total":1683,"meta":1860,"pct":90.5,"n_superou":5,"n_atingiu":2,"n_nao":6}},"produtos":[{"nome":"AQUECEDOR DE PASSAGEM","dias":{"05/05":524,"06/05":458,"07/05":623,"08/05":530,"11/05":592,"12/05":713,"13/05":708,"14/05":546,"15/05":574,"16/05":69,"18/05":543,"19/05":545,"20/05":501}},{"nome":"DUCHA DUCALI","dias":{"05/05":144,"06/05":144,"07/05":144,"08/05":128,"11/05":120,"12/05":158,"13/05":142,"14/05":130,"15/05":128,"16/05":null,"18/05":120,"19/05":192,"20/05":228}},{"nome":"DUCHA MOVE","dias":{"05/05":32,"06/05":32,"07/05":32,"08/05":32,"11/05":16,"12/05":null,"13/05":8,"14/05":null,"15/05":null,"16/05":null,"18/05":null,"19/05":32,"20/05":32}},{"nome":"DUCHA MOVE BLINDADA","dias":{"05/05":32,"06/05":32,"07/05":32,"08/05":32,"11/05":32,"12/05":32,"13/05":24,"14/05":16,"15/05":48,"16/05":null,"18/05":null,"19/05":null,"20/05":null}},{"nome":"DUCHA SUBLIME","dias":{"05/05":null,"06/05":null,"07/05":null,"08/05":null,"11/05":16,"12/05":32,"13/05":32,"14/05":16,"15/05":48,"16/05":null,"18/05":32,"19/05":8,"20/05":null}},{"nome":"DUCHA SUBLIME BLINDADA","dias":{"05/05":null,"06/05":null,"07/05":null,"08/05":null,"11/05":null,"12/05":null,"13/05":null,"14/05":null,"15/05":null,"16/05":null,"18/05":32,"19/05":24,"20/05":32}},{"nome":"LUNA","dias":{"05/05":58,"06/05":36,"07/05":60,"08/05":72,"11/05":64,"12/05":64,"13/05":48,"14/05":64,"15/05":64,"16/05":null,"18/05":64,"19/05":64,"20/05":72}},{"nome":"MOMENT 4T","dias":{"05/05":350,"06/05":538,"07/05":188,"08/05":72,"11/05":60,"12/05":64,"13/05":48,"14/05":64,"15/05":64,"16/05":null,"18/05":64,"19/05":64,"20/05":72}},{"nome":"MOMENT ELETRÔNICA","dias":{"05/05":416,"06/05":428,"07/05":394,"08/05":454,"11/05":464,"12/05":484,"13/05":324,"14/05":472,"15/05":458,"16/05":124,"18/05":548,"19/05":726,"20/05":530}},{"nome":"PRIMA","dias":{"05/05":216,"06/05":216,"07/05":212,"08/05":220,"11/05":216,"12/05":216,"13/05":144,"14/05":176,"15/05":208,"16/05":48,"18/05":216,"19/05":176,"20/05":216}}],"days":["05/05","06/05","07/05","08/05","11/05","12/05","13/05","14/05","15/05","16/05","18/05","19/05","20/05"]};
-
-async function loadData(){
-  let loaded=false;
-  // 1. Try server
-  try{
-    const r=await fetch('/data',{cache:'no-store'});
-    if(r.ok){
-      const raw=await r.json();
-      if(!raw.error&&raw.days&&raw.days.length){
-        delete raw._raw;D=raw;loaded=true;
-      }
-    }
-  }catch(e){}
-  // 2. Try GitHub raw (public repo)
-  if(!loaded){
+  // Wake up server with retries
+  let serverOk=false;
+  for(let i=0;i<5;i++){
     try{
-      const gh=await fetch('https://raw.githubusercontent.com/BrunoPedrolo/zagonel-kpi/main/data.json?t='+Date.now());
-      if(gh.ok){
-        const gd=await gh.json();
-        if(gd&&gd.days&&gd.days.length){delete gd._raw;D=gd;loaded=true;}
-      }
+      const w=await fetch('/data',{signal:AbortSignal.timeout(8000)});
+      if(w.status!==403){serverOk=true;break;}
     }catch(e){}
+    await new Promise(r=>setTimeout(r,3000));
+    setProgress(10+i*8);
   }
-  // 3. Embedded fallback
-  if(!loaded){
-    D=JSON.parse(JSON.stringify(FALLBACK_DATA));
-  }
-  day=D.days[D.days.length-1];
-  populateInspLogin();
-  buildUI();
-}
-function populateInspLogin(){
-  const sel=document.getElementById('insp-login-sel');
-  if(!sel||!D)return;
-  sel.innerHTML='<option value="">Seleciona...</option>'+D.inspetores.map(x=>`<option value="${x.nome}">${x.nome}</option>`).join('');
-}
 
-// ── UI BUILD ──
-function buildUI(){
-  document.getElementById('main-content').innerHTML=`
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
-        <div class="main-tabs" style="margin-bottom:0;border:none">
-          <div class="main-tab active" onclick="setMainTab('dashboard')">Dashboard</div>
-          <div class="main-tab" onclick="setMainTab('justificativas')">Justificativas</div>
-        </div>
-        <div style="width:1px;height:28px;background:#d0e8d0"></div>
-        <button onclick="setMainTab('ranking')" id="btn-ranking" style="padding:6px 14px;font-size:12px;font-weight:600;border-radius:7px;border:1.5px solid #22B04B;background:#fff;color:#22B04B;cursor:pointer;transition:all .15s" onmouseover="this.style.background='#22B04B';this.style.color='#fff'" onmouseout="this.style.background=mainTab==='ranking'?'#22B04B':'#fff';this.style.color=mainTab==='ranking'?'#fff':'#22B04B'">📊 Ranking</button>
-        <button onclick="openRelatorio()" style="padding:6px 14px;font-size:12px;font-weight:600;border-radius:7px;border:1.5px solid #22B04B;background:#fff;color:#22B04B;cursor:pointer;transition:all .15s" onmouseover="this.style.background='#22B04B';this.style.color='#fff'" onmouseout="this.style.background='#fff';this.style.color='#22B04B'">📋 Relatório Individual</button>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px">
-        <span style="font-size:11px;color:#5a8a60;background:#f0faf0;padding:4px 10px;border-radius:6px;border:1px solid #d0e8d0" id="last-update">Último: ${D.days[D.days.length-1]}</span>
-        <a href="/upload-page" class="btn btn-g btn-sm">📤 Upload</a>
-      </div>
-    </div>
-    <div id="p-dashboard" class="panel active"></div>
-    <div id="p-ranking" class="panel"></div>
-    <div id="p-justificativas" class="panel"></div>
-  `;
-  buildDashboard();buildRanking();buildJustificativas();
-}
+  setProgress(50);
+  ss('- Enviando arquivo... aguarda, pode levar 1-2 minutos.','loading');
 
-function setMainTab(t){
-  mainTab=t;
-  document.querySelectorAll('.main-tab').forEach((b,i)=>b.classList.toggle('active',['dashboard','justificativas'][i]===t));
-  document.querySelectorAll('#p-dashboard,#p-ranking,#p-justificativas').forEach((p,i)=>p.classList.toggle('active',['dashboard','ranking','justificativas'][i]===t));
-  const rb=document.getElementById('btn-ranking');
-  if(rb){rb.style.background=t==='ranking'?'#22B04B':'#fff';rb.style.color=t==='ranking'?'#fff':'#22B04B';}
-  if(t==='ranking')setTimeout(renderRankingCharts,100);
-}
+  const fd=new FormData();
+  fd.append('file',f);
 
-// ── DASHBOARD ──
-function buildDashboard(){
-  document.getElementById('p-dashboard').innerHTML=`
-    <div class="day-bar" id="day-toggle"></div>
-    <div class="filter-bar">
-      <div class="filter-row"><span class="filter-lbl">Turno:</span><div id="turno-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div></div>
-      <div class="filter-row"><span class="filter-lbl">Colaborador:</span><div id="insp-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div></div>
-    </div>
-    <div id="kpi-area" class="kpi-grid"></div>
-    <div style="display:flex;border-bottom:1px solid #d0e8d0;margin-bottom:12px">
-      <div class="main-tab active" style="font-size:12px;padding:6px 14px" onclick="setSubTab('inspetores')">Inspetores</div>
-      <div class="main-tab" style="font-size:12px;padding:6px 14px" onclick="setSubTab('produtos')">Produtos</div>
-    </div>
-    <div id="p-inspetores" class="panel active"></div>
-    <div id="p-produtos" class="panel"></div>
-  `;
-  buildDayToggle();buildChips();render();
-}
-
-function setDay(d){day=d;document.querySelectorAll('.dbtn').forEach(b=>b.classList.toggle('active',b.dataset.d===d));render();}
-function setSubTab(t){subTab=t;document.querySelectorAll('#p-dashboard .main-tab').forEach((b,i)=>b.classList.toggle('active',['inspetores','produtos'][i]===t));document.querySelectorAll('#p-inspetores,#p-produtos').forEach((p,i)=>p.classList.toggle('active',['inspetores','produtos'][i]===t));render();}
-
-function buildDayToggle(){
-  document.getElementById('day-toggle').innerHTML=
-    D.days.map((d,i)=>`<button class="dbtn${i===D.days.length-1?' active':''}" data-d="${d}" onclick="setDay('${d}')">${d}</button>`).join('')+
-    `<button class="dbtn" data-d="comp" onclick="setDay('comp')">Geral</button>`;
-}
-
-function buildChips(){
-  document.getElementById('turno-chips').innerHTML=
-    `<div class="fchip active" id="ta" onclick="clearTurno()">Todos</div>`+
-    Object.keys(TURNOS).map(t=>`<div class="fchip" id="tc-${t.replace(':','')}" onclick="toggleTurno('${t}')">${t}</div>`).join('');
-  document.getElementById('insp-chips').innerHTML=
-    `<div class="fchip active" id="ca" onclick="clearInsp()">Todos</div>`+
-    D.inspetores.map((x,i)=>`<div class="fchip" id="c${i}" onclick="toggleInsp(${i})">${x.nome.split(' ')[0]}</div>`).join('');
-}
-
-function clearTurno(){selTurno.clear();document.querySelectorAll('[id^="tc-"]').forEach(c=>c.className='fchip');document.getElementById('ta').className='fchip active';render();}
-function toggleTurno(t){document.getElementById('ta').className='fchip';const id='tc-'+t.replace(':','');if(selTurno.has(t)){selTurno.delete(t);document.getElementById(id).className='fchip';}else{selTurno.add(t);document.getElementById(id).className='fchip active';};if(!selTurno.size)document.getElementById('ta').className='fchip active';render();}
-function clearInsp(){selInsp.clear();document.querySelectorAll('[id^="c"]:not([id="ca"]):not([id^="tc"])').forEach(c=>c.className='fchip');document.getElementById('ca').className='fchip active';render();}
-function toggleInsp(i){document.getElementById('ca').className='fchip';if(selInsp.has(i)){selInsp.delete(i);document.getElementById('c'+i).className='fchip';}else{selInsp.add(i);document.getElementById('c'+i).className='fchip active';};if(!selInsp.size)document.getElementById('ca').className='fchip active';render();}
-const filtered=()=>D.inspetores.filter((_,i)=>(selTurno.size===0||selTurno.has(getTurno(D.inspetores[i].nome)))&&(selInsp.size===0||selInsp.has(i)));
-
-function calcTotals(group,d){
-  const pr=group.filter(x=>x.dias[d]);
-  const tot=pr.reduce((a,x)=>a+x.dias[d].total,0);
-  const met=pr.reduce((a,x)=>a+x.dias[d].meta,0);
-  const pct=met?Math.round(tot/met*1000)/10:0;
-  return{tot,met,pct,ns:pr.filter(x=>x.dias[d].status==='SUPEROU').length,na:pr.filter(x=>x.dias[d].status==='ATINGIU').length,nn:pr.filter(x=>x.dias[d].status==='NAO_ATINGIU').length,n:pr.length};
-}
-
-function render(){renderKPIs();if(subTab==='inspetores')renderCards();else renderProdutos();}
-
-function renderKPIs(){
-  const el=document.getElementById('kpi-area');if(!el)return;
-  const f=filtered();
-  if(day==='comp'){
-    const tots=D.days.map(d=>calcTotals(f,d));
-    el.innerHTML=D.days.map((d,i)=>`<div class="kpi-card"><div class="kl">Peças ${d}</div><div class="kv" style="color:${tots[i].pct>=CFG.threshSuper?'#22B04B':tots[i].pct>=CFG.threshAtinge?'#4CAF50':'#e65100'}">${tots[i].tot.toLocaleString('pt-BR')}</div><div class="ks">${tots[i].pct}% da meta</div><div class="kbar"><div class="kbar-f" style="width:${Math.min(tots[i].pct,100)}%"></div></div></div>`).join('')+
-    `<div class="kpi-card"><div class="kl">Status por dia</div><div style="display:flex;flex-direction:column;gap:4px;margin-top:6px;font-size:11px">${D.days.map((d,i)=>`<div style="display:flex;justify-content:space-between"><span style="color:#5a8a60">${d}</span><span><span style="color:#22B04B;font-weight:600">✓${tots[i].ns}</span> <span style="color:#4CAF50;font-weight:600">●${tots[i].na}</span> <span style="color:#e65100;font-weight:600">✕${tots[i].nn}</span></span></div>`).join('')}</div></div>`;
-    return;
-  }
-  const t=calcTotals(f,day);
-  el.innerHTML=`
-    <div class="kpi-card"><div class="kl">Realizadas</div><div class="kv">${t.tot.toLocaleString('pt-BR')}</div><div class="ks">Meta: ${t.met.toLocaleString('pt-BR')}</div><div class="kbar"><div class="kbar-f" style="width:${Math.min(t.pct,100)}%"></div></div></div>
-    <div class="kpi-card"><div class="kl">% da meta</div><div class="kv" style="color:${t.pct>=CFG.threshSuper?'#22B04B':t.pct>=CFG.threshAtinge?'#4CAF50':'#e65100'}">${t.pct}%</div><div class="ks">${t.n} com dados</div></div>
-    <div class="kpi-card"><div class="kl">Status</div><div style="display:flex;flex-direction:column;gap:3px;margin-top:6px"><span class="badge bs">✓ ${t.ns} superou</span><span class="badge ba">● ${t.na} atingiu</span><span class="badge bn">✕ ${t.nn} abaixo</span></div></div>
-    <div class="kpi-card"><div class="kl">Atingimento</div><div class="kv" style="color:${t.pct>=CFG.threshSuper?'#22B04B':t.pct>=CFG.threshAtinge?'#4CAF50':'#e65100'}">${t.pct}%</div><div class="kbar"><div class="kbar-f" style="width:${Math.min(t.pct,100)}%;background:${t.pct>=CFG.threshSuper?'#22B04B':t.pct>=CFG.threshAtinge?'#4CAF50':'#e65100'}"></div></div><div class="ks">${t.tot.toLocaleString('pt-BR')} de ${t.met.toLocaleString('pt-BR')}</div></div>`;
-}
-
-function linhasHtml(linhas){
-  return linhas.map(l=>`<div class="linha-row"><span class="linha-name">${l.label}</span><div style="display:flex;align-items:center;gap:5px"><div class="mini-bar"><div class="mini-bar-f" style="width:${W(l.pct)}%;background:${BC(l.status)}"></div></div><span style="font-size:11px;font-weight:700;color:${BC(l.status)};min-width:34px;text-align:right">${l.pct}%</span><span style="font-size:10px;color:#a0c0a0;min-width:22px;text-align:right">${l.total}</span></div></div>`).join('');
-}
-
-function getJust(nome,d){
-  const k=`${nome}|${d||day}`;
-  try{const s=localStorage.getItem('just_'+k);return s?JSON.parse(s):null;}catch(e){return null;}
-}
-
-function renderCards(){
-  const el=document.getElementById('p-inspetores');if(!el)return;
-  const f=filtered();
-  if(!f.length){el.innerHTML=`<div class="cards-grid"><div style="grid-column:1/-1;text-align:center;padding:40px;color:#5a8a60">Nenhum colaborador encontrado.</div></div>`;return;}
-  let h='<div class="cards-grid">';
-  f.forEach((insp,idx)=>{
-    const [abg,afg]=AV_COLORS[idx%AV_COLORS.length];
-    const turno=getTurno(insp.nome);
-    const tBg=TURNO_COR[turno]||'#f5f5f5';
-    const tFg=TURNO_FG[turno]||'#5a8a60';
-    if(day==='comp'){
-      const dAll=D.days.map(d=>insp.dias[d]);
-      const dFirst=dAll.find(Boolean),dLast=[...dAll].reverse().find(Boolean);
-      const delta=dFirst&&dLast&&dFirst!==dLast?+(dLast.pct-dFirst.pct).toFixed(1):null;
-      const dCls=delta===null?'babs':delta>0?'bs':'bn';
-      const dTxt=delta===null?'—':delta>0?`▲ +${delta}pp`:`▼ ${delta}pp`;
-      h+=`<div class="icard"><div class="icard-h"><div style="display:flex;align-items:center;gap:8px"><div class="av" style="background:${abg};color:${afg}">${ini(insp.nome)}</div><div><div class="icard-name">${insp.nome}</div><span style="font-size:10px;font-weight:500;padding:2px 6px;border-radius:4px;background:${tBg};color:${tFg}">Turno ${turno}</span></div></div><span class="badge ${dCls}">${dTxt}</span></div>
-      ${D.days.map(d=>{const dd=insp.dias[d];return`<div style="font-size:10px;font-weight:600;color:#5a8a60;text-transform:uppercase;margin:7px 0 3px">${d}</div>`+(dd?`<div style="display:flex;align-items:center;gap:6px;margin-bottom:4px"><span style="font-size:12px;font-weight:700;color:${BC(dd.status)};width:40px">${dd.pct}%</span><div style="flex:1;height:4px;background:#e8f5e9;border-radius:2px;overflow:hidden"><div style="width:${W(dd.pct)}%;height:100%;background:${BC(dd.status)}"></div></div><span class="badge ${BCls(dd.status)}" style="font-size:9px">${BTxt(dd.status)}</span></div>${linhasHtml(dd.linhas)}`:'<div style="font-size:11px;color:#a5c8a8;font-style:italic;padding:2px 0">Ausente</div>');}).join('')}
-      <div class="istats" style="margin-top:8px">${D.days.map(d=>`<div class="istat"><div class="istat-v">${insp.dias[d]?insp.dias[d].total:'—'}</div><div class="istat-l">${d}</div></div>`).join('')}</div></div>`;
+  try{
+    const r=await fetch('/upload',{
+      method:'POST',
+      headers:{'X-API-Key':'zagonel2026'},
+      body:fd,
+      signal:AbortSignal.timeout(240000)
+    });
+    setProgress(90);
+    const txt=await r.text();
+    let d;
+    try{d=JSON.parse(txt);}
+    catch(e){
+      ss('- Servidor ainda processando - aguarda 30 segundos e tenta novamente.','err');
+      document.getElementById('btn').disabled=false;
       return;
     }
-    const d=insp.dias[day];
-    if(!d){h+=`<div class="icard sem-dados"><div class="icard-h"><div style="display:flex;align-items:center;gap:8px"><div class="av" style="background:${abg};color:${afg};opacity:.5">${ini(insp.nome)}</div><div><div class="icard-name" style="color:#9e9e9e">${insp.nome}</div><span style="font-size:10px;font-weight:500;padding:2px 6px;border-radius:4px;background:#f5f5f5;color:#9e9e9e">Turno ${turno}</span></div></div></div><div style="text-align:center;padding:16px 0;font-size:12px;color:#a5c8a8;font-style:italic">sem dados</div></div>`;return;}
-    const just=getJust(insp.nome,day);
-    const abaixo=d.status==='NAO_ATINGIU';
-    h+=`<div class="icard"><div class="icard-h"><div style="display:flex;align-items:center;gap:8px"><div class="av" style="background:${abg};color:${afg}">${ini(insp.nome)}</div><div><div class="icard-name">${insp.nome}</div><span style="font-size:10px;font-weight:500;padding:2px 6px;border-radius:4px;background:${tBg};color:${tFg}">Turno ${turno}</span></div></div><span class="badge ${BCls(d.status)}">${BTxt(d.status)}</span></div>
-    <div class="big-pct" style="color:${BC(d.status)}">${d.pct}%</div>
-    <div class="imeta">${d.total} peças · meta ${d.meta}</div>
-    <div class="prog"><div class="prog-f" style="width:${W(d.pct)}%;background:${BC(d.status)}"></div></div>
-    ${linhasHtml(d.linhas)}
-    ${just?`<div class="just-box">💬 ${just.motivo}${just.obs?': '+just.obs:''}</div>`:''}
-    ${abaixo&&!just?`<button class="btn btn-sm" style="margin-top:8px;color:#e65100;border-color:#ffcc80;font-size:11px" onclick="openInspLogin('${insp.nome}')">✍ Justificar</button>`:''}
-    <div class="istats"><div class="istat"><div class="istat-v">${d.total}</div><div class="istat-l">Realizadas</div></div><div class="istat"><div class="istat-v">${d.meta}</div><div class="istat-l">Meta</div></div><div class="istat"><div class="istat-v" style="color:${BC(d.status)}">${d.pct}%</div><div class="istat-l">Ating.</div></div></div></div>`;
-  });
-  h+='</div>';
-  document.getElementById('p-inspetores').innerHTML=h;
-}
-
-function renderProdutos(){
-  const el=document.getElementById('p-produtos');if(!el)return;
-  if(day==='comp'){
-    let h=`<table class="prod-table"><thead><tr><th>Produto</th>${D.days.map(d=>`<th class="r">${d}</th>`).join('')}</tr></thead><tbody>`;
-    D.produtos.forEach(p=>{const vals=D.days.map(d=>p.dias[d]);const v0=vals[0],vL=vals[vals.length-1];const trend=v0&&vL?(vL-v0>0?' ▲':vL-v0<0?' ▼':''):'';h+=`<tr><td>${p.nome}${trend}</td>${vals.map(v=>`<td class="r">${v!=null?v:'—'}</td>`).join('')}</tr>`;});
-    h+=`</tbody></table>`;el.innerHTML=h;return;
-  }
-  let h=`<table class="prod-table"><thead><tr><th>Produto</th><th class="r">Peças testadas</th></tr></thead><tbody>`;
-  D.produtos.forEach(p=>{const v=p.dias[day];if(!v){h+=`<tr style="opacity:.4"><td>${p.nome}</td><td class="r" style="font-style:italic;color:#a5c8a8">Sem produção</td></tr>`;return;}h+=`<tr><td>${p.nome}</td><td class="r"><strong>${v}</strong></td></tr>`;});
-  h+=`</tbody></table>`;el.innerHTML=h;
-}
-
-// ── RANKING ──
-function buildRanking(){
-  const d=document.getElementById('p-ranking');
-  const anos=[...new Set(D.days.map(d=>d.split('/')[2]||'2026'))];
-  const meses=[...new Set(D.days.map(d=>d.split('/')[1]))];
-  const nomeMes=m=>({'04':'Abril','05':'Maio','06':'Junho','07':'Julho','08':'Agosto','09':'Setembro','10':'Outubro','11':'Novembro','12':'Dezembro'}[m]||m);
-  d.innerHTML=`
-    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;background:#fff;border:1.5px solid #d0e8d0;border-radius:10px">
-      <span style="font-size:12px;font-weight:600;color:#3a6e3a">Período:</span>
-      <select class="sel" id="rk-ano" onchange="filterRanking()" style="min-width:90px">
-        <option value="">Todos os anos</option>
-        ${anos.map(a=>`<option value="${a}">${a}</option>`).join('')}
-      </select>
-      <select class="sel" id="rk-mes" onchange="filterRanking()" style="min-width:110px">
-        <option value="">Todos os meses</option>
-        ${meses.map(m=>`<option value="${m}">${nomeMes(m)}</option>`).join('')}
-      </select>
-      <div style="display:flex;gap:6px;flex-wrap:wrap" id="rk-day-chips">
-        <div class="fchip active" id="rk-all" onclick="filterRankingDay('')">Todos os dias</div>
-        ${D.days.map(d=>`<div class="fchip" id="rk-d-${d.replace('/','')}" onclick="filterRankingDay('${d}')">${d}</div>`).join('')}
-      </div>
-    </div>
-    <div class="kpi-grid" style="margin-bottom:14px">
-      <div class="kpi-card"><div class="kl">Maior atingimento</div><div id="r-maior" class="kv" style="color:#22B04B">—</div><div id="r-maior-sub" class="ks"></div></div>
-      <div class="kpi-card"><div class="kl">Média do time</div><div id="r-media" class="kv">—</div><div class="ks">todos os dias</div></div>
-      <div class="kpi-card"><div class="kl">Dias consecutivos</div><div id="r-consec" class="kv">—</div><div id="r-consec-sub" class="ks"></div></div>
-      <div class="kpi-card"><div class="kl">Justif. pendentes</div><div id="r-pend" class="kv" style="color:#e65100">—</div><div class="ks">abaixo da meta</div></div>
-    </div>
-    <div class="g2" style="margin-bottom:12px">
-      <div class="gchart"><div class="gchart-h">Evolução diária do time</div><div class="gchart-b"><canvas id="rc1" height="130"></canvas></div></div>
-      <div class="gchart"><div class="gchart-h">Status hoje</div><div class="gchart-b" style="display:flex;align-items:center;gap:14px"><canvas id="rc2" width="100" height="100" style="flex-shrink:0"></canvas><div id="rc2-legend" style="display:flex;flex-direction:column;gap:7px"></div></div></div>
-    </div>
-    <div class="gchart" style="margin-bottom:12px"><div class="gchart-h">Ranking de atingimento por inspetor</div><div class="gchart-b"><canvas id="rc3" height="220"></canvas></div></div>
-    <div class="g2" style="margin-bottom:12px">
-      <div class="gchart"><div class="gchart-h">Heatmap · inspetor × dia</div><div class="gchart-b"><canvas id="rc4" height="180"></canvas></div></div>
-      <div class="gchart"><div class="gchart-h">Dias consecutivos na meta</div><div class="gchart-b"><canvas id="rc5" height="180"></canvas></div></div>
-    </div>
-    <div class="gchart"><div class="gchart-h">Comparativo por produto entre dias</div><div class="gchart-b"><canvas id="rc6" height="200"></canvas></div></div>
-  `;
-}
-
-function filterRanking(){
-  const ano=document.getElementById('rk-ano')?.value||'';
-  const mes=document.getElementById('rk-mes')?.value||'';
-  // Update day chips visibility
-  const chips=document.getElementById('rk-day-chips');
-  if(chips){
-    D.days.forEach(d=>{
-      const el=document.getElementById('rk-d-'+d.replace('/',''));
-      if(!el)return;
-      const [dd,mm]=d.split('/');
-      const show=(!mes||mm===mes)&&(!ano||true); // ano always matches for now
-      el.style.display=show?'':'none';
-    });
-  }
-  rankingDayFilter='';
-  document.getElementById('rk-all')?.classList.add('active');
-  D.days.forEach(d=>document.getElementById('rk-d-'+d.replace('/',''))?.classList.remove('active'));
-  renderRankingCharts();
-}
-function filterRankingDay(d){
-  rankingDayFilter=d;
-  document.getElementById('rk-all')?.classList.toggle('active',d==='');
-  D.days.forEach(dd=>document.getElementById('rk-d-'+dd.replace('/',''))?.classList.toggle('active',dd===d));
-  renderRankingCharts();
-}
-let rankingDayFilter='';
-
-function getRankingDays(){
-  const ano=document.getElementById('rk-ano')?.value||'';
-  const mes=document.getElementById('rk-mes')?.value||'';
-  if(rankingDayFilter)return[rankingDayFilter];
-  return D.days.filter(d=>{
-    const [dd,mm]=d.split('/');
-    return(!mes||mm===mes);
-  });
-}
-
-function renderRankingCharts(){
-  if(!D)return;
-  // Destroy old charts
-  Object.values(chartInstances).forEach(c=>{try{c.destroy();}catch(e){}});
-  chartInstances={};
-  if(!D||!D.days||!D.days.length)return;
-  const activeDays=getRankingDays();
-  if(!activeDays.length)return;
-
-  const G='#22B04B',GA='#66BB6A',GN='#e65100';
-  const tc='rgba(90,138,90,0.8)',gc='rgba(34,176,75,0.12)';
-  const lastDay=D.days[D.days.length-1];
-  const lastSummary=D.inspetores.map(x=>{const d=x.dias[lastDay];return d?{nome:x.nome,pct:d.pct,status:d.status}:null;}).filter(Boolean);
-
-  // Update KPIs
-  let maxPct=0,maxName='',maxDay='';
-  activeDays.forEach(d=>D.inspetores.forEach(x=>{if(x.dias[d]&&x.dias[d].pct>maxPct){maxPct=x.dias[d].pct;maxName=x.nome.split(' ')[0];maxDay=d;}}));
-  const allVals=activeDays.map(d=>{const pr=D.inspetores.filter(x=>x.dias[d]);const tot=pr.reduce((a,x)=>a+x.dias[d].total,0);const met=pr.reduce((a,x)=>a+x.dias[d].meta,0);return met?Math.round(tot/met*1000)/10:0;});
-  const mediaGeral=allVals.length?Math.round(allVals.reduce((a,b)=>a+b,0)/allVals.length*10)/10:0;
-  // Consecutivos
-  let maxConsec=0,maxConsecName='';
-  D.inspetores.forEach(x=>{let c=0,max=0;activeDays.forEach(d=>{if(x.dias[d]&&x.dias[d].pct>=CFG.threshAtinge){c++;max=Math.max(max,c);}else c=0;});if(max>maxConsec){maxConsec=max;maxConsecName=x.nome.split(' ')[0];}}); 
-  const pendentes=D.inspetores.filter(x=>{const d=x.dias[lastDay];return d&&d.status==='NAO_ATINGIU'&&!getJust(x.nome,lastDay);}).length;
-
-  const el=n=>document.getElementById(n);
-  if(el('r-maior'))el('r-maior').textContent=maxPct+'%';
-  if(el('r-maior-sub'))el('r-maior-sub').textContent=maxName+' · '+maxDay;
-  if(el('r-media'))el('r-media').textContent=mediaGeral+'%';
-  if(el('r-consec'))el('r-consec').textContent=maxConsec+'d';
-  if(el('r-consec-sub'))el('r-consec-sub').textContent=maxConsecName;
-  if(el('r-pend'))el('r-pend').textContent=pendentes;
-
-  // C1: Linha evolução
-  const c1=el('rc1');if(c1){
-    chartInstances.c1=new Chart(c1,{type:'line',data:{labels:activeDays,datasets:[{label:'% meta',data:allVals,borderColor:G,backgroundColor:gc,fill:true,tension:0.4,pointBackgroundColor:allVals.map(v=>v>=CFG.threshSuper?G:v>=CFG.threshAtinge?GA:GN),pointRadius:5,borderWidth:2},{label:'Meta',data:D.days.map(()=>CFG.threshAtinge),borderColor:'rgba(34,176,75,0.35)',borderDash:[5,4],borderWidth:1.5,pointRadius:0,fill:false}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{grid:{color:gc},ticks:{color:tc,font:{size:10}}},y:{grid:{color:gc},ticks:{color:tc,font:{size:10},callback:v=>v+'%'},min:0,max:Math.max(...allVals,100)+20}}}});
-  }
-
-  // C2: Pizza
-  const ns=lastSummary.filter(x=>x.status==='SUPEROU').length;
-  const na=lastSummary.filter(x=>x.status==='ATINGIU').length;
-  const nn=lastSummary.filter(x=>x.status==='NAO_ATINGIU').length;
-  const c2=el('rc2');if(c2){
-    chartInstances.c2=new Chart(c2,{type:'doughnut',data:{labels:['Superou','Atingiu','Não atingiu'],datasets:[{data:[ns,na,nn],backgroundColor:[G,GA,GN],borderWidth:0}]},options:{responsive:false,cutout:'58%',plugins:{legend:{display:false}}}});
-  }
-  const leg=el('rc2-legend');if(leg){leg.innerHTML=[['#22B04B','Superou',ns],['#66BB6A','Atingiu',na],['#e65100','Não atingiu',nn]].map(([c,l,v])=>`<div style="display:flex;align-items:center;gap:7px"><div style="width:10px;height:10px;border-radius:50%;background:${c}"></div><span style="font-size:12px;color:#5a8a60">${l}</span><strong style="font-size:13px;margin-left:auto">${v}</strong></div>`).join('');}
-
-  // C3: Ranking horizontal
-  const ranked=[...D.inspetores].map(x=>{const days=activeDays.filter(d=>x.dias[d]);const tot=days.reduce((a,d)=>a+x.dias[d].total,0);const met=days.reduce((a,d)=>a+x.dias[d].meta,0);return{nome:x.nome.split(' ')[0],pct:met?Math.round(tot/met*1000)/10:0};}).sort((a,b)=>b.pct-a.pct);
-  const c3=el('rc3');if(c3){
-    chartInstances.c3=new Chart(c3,{type:'bar',data:{labels:ranked.map(x=>x.nome),datasets:[{data:ranked.map(x=>x.pct),backgroundColor:ranked.map(x=>x.pct>=CFG.threshSuper?G:x.pct>=CFG.threshAtinge?GA:GN),borderRadius:4,borderSkipped:false}]},options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.raw+'%'}}},scales:{x:{grid:{color:gc},ticks:{color:tc,font:{size:10},callback:v=>v+'%'},max:Math.max(...ranked.map(x=>x.pct))+20},y:{grid:{display:false},ticks:{color:tc,font:{size:10}}}}}});
-  }
-
-  // C4: Heatmap canvas
-  const c4=el('rc4');if(c4){
-    c4.width=c4.parentElement.offsetWidth-28||300;
-    c4.height=Math.max(160, D.inspetores.length*22+30);
-    const ctx=c4.getContext('2d');
-    const names=D.inspetores.map(x=>x.nome.split(' ')[0]);
-    const dias=activeDays;
-    const ml=60,mt=22,cw=c4.width-ml-8,ch=c4.height-mt-4;
-    const cW=cw/dias.length,cH=ch/names.length;
-    ctx.clearRect(0,0,c4.width,c4.height);
-    ctx.font='10px -apple-system';
-    ctx.fillStyle='#5a8a60';
-    dias.forEach((d,i)=>{ctx.textAlign='center';ctx.fillText(d,ml+i*cW+cW/2,14);});
-    names.forEach((n,i)=>{ctx.textAlign='right';ctx.fillText(n,ml-4,mt+i*cH+cH/2+4);});
-    D.inspetores.forEach((insp,ri)=>{
-      dias.forEach((d,ci)=>{
-        const v=insp.dias[d]?.pct;
-        if(v==null){ctx.fillStyle='rgba(0,0,0,0.05)';}
-        else if(v>=CFG.threshSuper)ctx.fillStyle=`rgba(34,176,75,${Math.min(v/100,1)})`;
-        else if(v>=CFG.threshAtinge)ctx.fillStyle='rgba(102,187,106,0.8)';
-        else ctx.fillStyle=`rgba(230,101,0,${0.3+v/200})`;
-        const x=ml+ci*cW+2,y=mt+ri*cH+2,w=cW-4,h=cH-4;
-        ctx.beginPath();ctx.roundRect(x,y,w,h,3);ctx.fill();
-        if(v!=null&&cW>28){ctx.fillStyle='rgba(255,255,255,0.9)';ctx.font='bold 8px -apple-system';ctx.textAlign='center';ctx.fillText(Math.round(v)+'%',x+w/2,y+h/2+3);}
-      });
-    });
-  }
-
-  // C5: Consecutivos
-  const c5=el('rc5');if(c5){
-    c5.width=c5.parentElement.offsetWidth-28||300;
-    c5.height=180;
-    const ctx=c5.getContext('2d');
-    ctx.clearRect(0,0,c5.width,c5.height);
-    const data=D.inspetores.map(x=>{
-      let c=0,max=0;
-      activeDays.forEach(d=>{if(x.dias[d]&&x.dias[d].pct>=CFG.threshAtinge){c++;max=Math.max(max,c);}else c=0;});
-      return{nome:x.nome.split(' ')[0],dias:max,total:Math.min(activeDays.length,7)};
-    }).sort((a,b)=>b.dias-a.dias).slice(0,8);
-    const ml=68,rh=16,gap=6,bsz=13,bGap=3;
-    ctx.font='11px -apple-system,sans-serif';
-    data.forEach((x,i)=>{
-      const {nome:n,dias:d,total:t}=x;
-      const y=i*(rh+gap)+4;
-      ctx.fillStyle='#5a8a60';ctx.textAlign='right';ctx.fillText(n,ml-4,y+rh/2+4);
-      for(let j=0;j<t;j++){
-        ctx.fillStyle=j<d?G:'rgba(0,0,0,0.07)';
-        ctx.beginPath();ctx.roundRect(ml+j*(bsz+bGap),y+2,bsz,bsz,3);ctx.fill();
-      }
-      ctx.fillStyle=d>=t?G:'#1a2e1a';ctx.font='bold 11px -apple-system,sans-serif';ctx.textAlign='left';
-      ctx.fillText(d+'d',ml+t*(bsz+bGap)+6,y+rh/2+4);
-      ctx.font='11px -apple-system,sans-serif';
-    });
-  }
-
-  // C6: Barras agrupadas produto
-  const c6=el('rc6');if(c6&&D.produtos){
-    const colors=['rgba(34,176,75,0.6)','rgba(34,176,75,0.85)','rgba(34,176,75,1)','rgba(102,187,106,0.7)','rgba(102,187,106,0.9)'];
-    c6.height=200;chartInstances.c6=new Chart(c6,{type:'bar',data:{labels:D.produtos.map(p=>p.nome.length>12?p.nome.substring(0,12)+'…':p.nome),datasets:activeDays.map((d,i)=>{return{label:d,data:D.produtos.map(p=>(p.dias[d]||0)),backgroundColor:colors[i%colors.length],borderRadius:3};})},options:{responsive:true,plugins:{legend:{display:true,position:'top',labels:{color:tc,font:{size:10},boxWidth:10,padding:10}}},scales:{x:{grid:{display:false},ticks:{color:tc,font:{size:10}}},y:{grid:{color:gc},ticks:{color:tc,font:{size:10}}}}}});
-  }
-}
-
-// ── RELATÓRIO INDIVIDUAL ──
-function buildRelatorio(){} // handled by modal
-function openRelatorio(){
-  if(!D){alert('Carregando dados...');return;}
-  const mesesUnicos=[...new Set(D.days.map(d=>d.split('/')[1]))];
-  document.getElementById('rel-modal-content').innerHTML=`
-    <div class="rel-ctrl" style="margin-bottom:14px">
-      <div class="rel-fld"><label class="rel-lbl">Colaborador</label>
-        <select class="sel" id="rel-insp"><option value="">Seleciona...</option>${D.inspetores.map(x=>`<option value="${x.nome}">${x.nome}</option>`).join('')}</select>
-      </div>
-      <div class="rel-fld"><label class="rel-lbl">Mês</label>
-        <select class="sel" id="rel-mes" onchange="updateRelDias()"><option value="">Todos</option>${mesesUnicos.map(m=>`<option value="${m}">${m==='04'?'Abril':m==='05'?'Maio':m==='06'?'Junho':m==='07'?'Julho':m==='08'?'Agosto':m}/2026</option>`).join('')}</select>
-      </div>
-      <div class="rel-fld"><label class="rel-lbl">De</label><select class="sel" id="rel-de">${D.days.map(d=>`<option value="${d}">${d}</option>`).join('')}</select></div>
-      <div class="rel-fld"><label class="rel-lbl">Até</label><select class="sel" id="rel-ate">${D.days.map((d,i)=>`<option value="${d}" ${i===D.days.length-1?'selected':''}>${d}</option>`).join('')}</select></div>
-      <button class="btn btn-g" onclick="gerarRel()">Gerar relatório</button>
-    </div>
-    <div id="rel-output"></div>`;
-  document.getElementById('relOverlay').classList.add('open');
-}
-function closeRelatorio(){document.getElementById('relOverlay').classList.remove('open');}
-function updateRelDias(){
-  const mes=document.getElementById('rel-mes').value;
-  const dias=mes?D.days.filter(d=>d.split('/')[1]===mes):D.days;
-  document.getElementById('rel-de').innerHTML=dias.map(d=>`<option value="${d}">${d}</option>`).join('');
-  document.getElementById('rel-ate').innerHTML=dias.map((d,i)=>`<option value="${d}" ${i===dias.length-1?'selected':''}>${d}</option>`).join('');
-}
-
-function gerarRel(){
-  const nome=document.getElementById('rel-insp').value;
-  const de=document.getElementById('rel-de').value;
-  const ate=document.getElementById('rel-ate').value;
-  if(!nome){alert('Seleciona um colaborador!');return;}
-  const insp=D.inspetores.find(x=>x.nome===nome);
-  if(!insp)return;
-  const dn=d=>{const p=d.split('/');return parseInt(p[1])*100+parseInt(p[0]);};
-  const dias=D.days.filter(d=>{const n=dn(d);return n>=dn(de)&&n<=dn(ate);});
-  const dcd=dias.filter(d=>insp.dias[d]);
-  if(!dcd.length){document.getElementById('rel-output').innerHTML=`<p style="text-align:center;padding:40px;color:#5a8a60">Sem dados para este período.</p>`;return;}
-  const tp=dcd.reduce((a,d)=>a+insp.dias[d].total,0);
-  const tm=dcd.reduce((a,d)=>a+insp.dias[d].meta,0);
-  const mp=Math.round(tp/tm*1000)/10;
-  const sg=mp>=CFG.threshSuper?'SUPEROU':mp>=CFG.threshAtinge?'ATINGIU':'NAO_ATINGIU';
-  const lm={};
-  dcd.forEach(d=>insp.dias[d].linhas.forEach(l=>{if(!lm[l.label])lm[l.label]={t:0,m:0,c:0};lm[l.label].t+=l.total;lm[l.label].m+=l.meta;lm[l.label].c++;}));
-  const linhas=Object.entries(lm).map(([label,v])=>{const p=Math.round(v.t/v.m*1000)/10;return{label,total:Math.round(v.t/v.c),meta:Math.round(v.m/v.c),pct:p,status:p>=CFG.threshSuper?'SUPEROU':p>=CFG.threshAtinge?'ATINGIU':'NAO_ATINGIU'};});
-  document.getElementById('rel-output').innerHTML=`
-    <div style="display:flex;justify-content:flex-end;margin-bottom:10px"><button class="btn btn-sm" onclick="exportImg()">📸 Exportar imagem</button></div>
-    <div id="rel-card">
-      <div style="height:4px;background:#22B04B;border-radius:4px 4px 0 0;margin:-24px -24px 20px"></div>
-      <div class="rel-h">
-        <div style="display:flex;align-items:center;gap:12px"><div class="rel-av">${ini(nome)}</div><div><div class="rel-name">${nome}</div><div class="rel-sub">Turno ${getTurno(nome)} · ${linhas.map(l=>l.label).join(' · ')}</div></div></div>
-        <div style="text-align:right;font-size:12px;color:#5a8a60"><span>Período</span><div style="font-size:14px;font-weight:600;color:#1a2e1a">${de} → ${ate}</div><span>${dcd.length} dia${dcd.length!==1?'s':''} com dados</span></div>
-      </div>
-      <div class="rel-kpis">
-        <div class="rel-kpi"><div class="rel-lbl" style="font-size:10px;color:#5a8a60;margin-bottom:3px">Total peças</div><div style="font-size:20px;font-weight:700;color:#1a2e1a">${tp.toLocaleString('pt-BR')}</div></div>
-        <div class="rel-kpi"><div class="rel-lbl" style="font-size:10px;color:#5a8a60;margin-bottom:3px">Média diária</div><div style="font-size:20px;font-weight:700;color:#1a2e1a">${Math.round(tp/dcd.length)}</div></div>
-        <div class="rel-kpi"><div class="rel-lbl" style="font-size:10px;color:#5a8a60;margin-bottom:3px">% média meta</div><div style="font-size:20px;font-weight:700;color:${BC(sg)}">${mp}%</div></div>
-        <div class="rel-kpi"><div class="rel-lbl" style="font-size:10px;color:#5a8a60;margin-bottom:3px">Consistência</div><div style="font-size:20px;font-weight:700;color:#1a2e1a">${dcd.filter(d=>insp.dias[d].pct>=CFG.threshAtinge).length}/${dcd.length}</div></div>
-      </div>
-      <div style="font-size:10px;font-weight:700;color:#5a8a60;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px">Evolução diária</div>
-      ${dcd.map(d=>{const dd=insp.dias[d];const just=getJust(nome,d);return`<div style="margin-bottom:8px"><div class="rel-day"><span style="font-size:12px;font-weight:500;color:#5a8a60;width:40px">${d}</span><div style="flex:1;height:5px;background:#e8f5e9;border-radius:3px;overflow:hidden"><div style="width:${W(dd.pct)}%;height:100%;background:${BC(dd.status)}"></div></div><span style="font-size:12px;font-weight:700;color:${BC(dd.status)};min-width:38px;text-align:right">${dd.pct}%</span><span style="font-size:11px;color:#5a8a60;min-width:70px;text-align:right">${dd.total}/${dd.meta} peças</span><span class="badge ${BCls(dd.status)}" style="font-size:9px;flex-shrink:0">${BTxt(dd.status)}</span></div>${just?`<div style="margin-left:46px;margin-top:3px;background:#fff8e1;border-left:3px solid #ffe082;border-radius:0 5px 5px 0;padding:5px 8px;font-size:11px;color:#5d4037">💬 <strong>${just.motivo}</strong>${just.obs?` · <em>${just.obs}</em>`:''}<span style="color:#bbb;margin-left:6px;font-size:10px">${just.ts||''}</span></div>`:dd.status==='NAO_ATINGIU'?`<div style="margin-left:46px;margin-top:3px;font-size:11px;color:#e65100;font-style:italic;opacity:.7">⚠ Sem justificativa registrada</div>`:''}</div>`;}).join('')}
-      <div style="font-size:10px;font-weight:700;color:#5a8a60;text-transform:uppercase;letter-spacing:.05em;margin:14px 0 8px">Média por linha</div>
-      <table class="rel-lt"><thead><tr><th>Produto / Linha</th><th class="r">Realiz.</th><th class="r">Meta</th><th class="r">% Meta</th></tr></thead><tbody>${linhas.map(l=>`<tr><td>${l.label}</td><td class="r">${l.total}</td><td class="r">${l.meta}</td><td class="r" style="color:${BC(l.status)};font-weight:700">${l.pct}%</td></tr>`).join('')}</tbody></table>
-      <div style="display:flex;justify-content:space-between;align-items:center;padding-top:12px;border-top:1px solid #d0e8d0;font-size:10px;color:#5a8a60">
-        <span>Zagonel · KPI Inspetores · ${new Date().toLocaleDateString('pt-BR')}</span>
-        <div style="display:flex;gap:10px"><span style="color:#22B04B">✓ ≥${CFG.threshSuper}%</span><span style="color:#4CAF50">● ${CFG.threshAtinge}–${CFG.threshSuper}%</span><span style="color:#e65100">✕ &lt;${CFG.threshAtinge}%</span></div>
-      </div>
-    </div>`;
-}
-
-async function exportImg(){
-  const card=document.getElementById('rel-card');if(!card)return;
-  const btn=event.target;btn.textContent='⏳...';btn.disabled=true;
-  try{const canvas=await html2canvas(card,{backgroundColor:'#fff',scale:2});const a=document.createElement('a');a.download='KPI_'+document.getElementById('rel-insp').value.split(' ')[0]+'_'+new Date().toLocaleDateString('pt-BR').replace(/\//g,'')+'.png';a.href=canvas.toDataURL('image/png');a.click();}catch(e){alert('Erro ao gerar imagem.');}
-  btn.textContent='📸 Exportar imagem';btn.disabled=false;
-}
-
-// ── JUSTIFICATIVAS ──
-function buildJustificativas(){
-  renderJustificativas();
-}
-
-function renderJustificativas(){
-  const el=document.getElementById('p-justificativas');if(!el)return;
-  const lastDay=D.days[D.days.length-1];
-  const abaixo=D.inspetores.filter(x=>{const d=x.dias[lastDay];return d&&d.status==='NAO_ATINGIU';});
-  const pendentes=abaixo.filter(x=>!getJust(x.nome,lastDay));
-  const justificados=abaixo.filter(x=>getJust(x.nome,lastDay));
-  el.innerHTML=`
-    <div style="display:flex;align-items:center;gap:10px;margin-bottom:16px;flex-wrap:wrap">
-      <div style="font-size:14px;font-weight:700;color:#1a2e1a">Justificativas · ${lastDay}</div>
-      <span class="badge bn">${pendentes.length} pendentes</span>
-      <span class="badge bs">${justificados.length} justificados</span>
-    </div>
-    ${abaixo.length===0?'<div style="text-align:center;padding:40px;color:#5a8a60">Nenhum inspetor abaixo da meta neste dia.</div>':''}
-    ${abaixo.map((insp,idx)=>{
-      const [abg,afg]=AV_COLORS[idx%AV_COLORS.length];
-      const d=insp.dias[lastDay];
-      const just=getJust(insp.nome,lastDay);
-      return`<div class="just-item ${just?'':'pending'}">
-        <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-bottom:8px">
-          <div style="display:flex;align-items:center;gap:8px">
-            <div class="av" style="background:${abg};color:${afg}">${ini(insp.nome)}</div>
-            <div><div style="font-size:13px;font-weight:700;color:#1a2e1a">${insp.nome}</div><div style="font-size:11px;color:#5a8a60">Turno ${getTurno(insp.nome)} · ${d.pct}% da meta</div></div>
-          </div>
-          <div style="display:flex;align-items:center;gap:8px">
-            ${just?`<span class="badge bs">Justificado</span>`:`<span class="badge bn">Pendente</span><button class="btn btn-sm" onclick="openInspLogin('${insp.nome}')" style="color:#e65100;border-color:#ffcc80">✍ Justificar</button>`}
-          </div>
-        </div>
-        ${just?`<div class="just-box">💬 ${just.motivo}${just.obs?': '+just.obs:''}${just.ts?'<span style="color:#9e9e9e;font-size:10px;margin-left:6px">'+just.ts+'</span>':''}</div>`:''}
-      </div>`;
-    }).join('')}
-  `;
-}
-
-// ── ADMIN ──
-function openAdmin(){document.getElementById('adminOverlay').classList.add('open');document.getElementById('admin-login').style.display='flex';document.getElementById('admin-content').style.display='none';document.getElementById('admin-pw-input').value='';document.getElementById('admin-pw-err').style.display='none';}
-function closeAdmin(){document.getElementById('adminOverlay').classList.remove('open');}
-function checkAdmin(){const pw=document.getElementById('admin-pw-input').value;if(pw===CFG.adminPw){document.getElementById('admin-login').style.display='none';document.getElementById('admin-content').style.display='block';buildAdminContent();}else{document.getElementById('admin-pw-err').style.display='block';}}
-function setAdminTab(t){document.querySelectorAll('.admin-tab').forEach((b,i)=>b.classList.toggle('active',['metas','params','motivos','acessos','justadmin','senha'][i]===t));document.querySelectorAll('.admin-panel').forEach((p,i)=>p.classList.toggle('active',['ap-metas','ap-params','ap-motivos','ap-acessos','ap-justadmin','ap-senha'][i]==='ap-'+t));}
-
-function buildAdminContent(){
-  buildAdminMetas();buildAdminParams();buildAdminMotivos();buildAdminAcessos();buildAdminJust();buildAdminSenha();
-}
-
-function buildAdminMetas(){
-  if(!D)return;
-  const el=document.getElementById('ap-metas');
-  let h=`<div style="font-size:12px;color:#5a8a60;margin-bottom:12px">Defina a meta de peças por dia e quantas linhas cada inspetor cobre. A meta total = meta/linha × nº de linhas.</div>`;
-  D.inspetores.forEach(insp=>{
-    const ref=Object.values(insp.dias).find(Boolean);
-    if(!ref)return;
-    const key=insp.nome;
-    const saved=CFG.metas[key]||{};
-    const nLinhas=ref.linhas.length;
-    const metaLinha=ref.linhas[0]?ref.linhas[0].meta:72;
-    const k=key.replace(/[\s]/g,'_');
-    h+=`<div style="background:#f9fef9;border:1px solid #e8f5e9;border-radius:8px;padding:10px;margin-bottom:8px">
-      <div style="font-size:12px;font-weight:700;color:#1a2e1a;margin-bottom:8px">${insp.nome} <span style="font-size:10px;font-weight:400;color:#5a8a60">· Turno ${getTurno(insp.nome)}</span></div>
-      <div class="field-row">
-        <div class="field-label">Meta por linha (peças/dia)<div class="field-sub">Meta atual: ${metaLinha} peças/linha</div></div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <input type="number" class="inp inp-w" id="ml_${k}" value="${saved.metaLinha||metaLinha}" min="1" oninput="updateMetaTotal('${k}')">
-          <span style="font-size:11px;color:#5a8a60">peças</span>
-        </div>
-      </div>
-      <div class="field-row">
-        <div class="field-label">Nº de linhas que cobre<div class="field-sub">Atual: ${nLinhas} linha${nLinhas!==1?'s':''}</div></div>
-        <div style="display:flex;gap:6px;align-items:center">
-          <input type="number" class="inp inp-w" id="nl_${k}" value="${saved.nLinhas||nLinhas}" min="1" oninput="updateMetaTotal('${k}')">
-          <span style="font-size:11px;color:#5a8a60">linhas</span>
-        </div>
-      </div>
-      <div class="field-row">
-        <div class="field-label">Meta total do dia<div class="field-sub">= meta/linha × nº linhas</div></div>
-        <div style="font-size:16px;font-weight:700;color:#22B04B" id="mt_${k}">${(saved.metaLinha||metaLinha)*(saved.nLinhas||nLinhas)}</div>
-      </div>
-      <div class="field-row">
-        <div class="field-label">Válido a partir de</div>
-        <input type="date" class="inp" style="width:140px" id="mv_${k}" value="${saved.desde||''}">
-      </div>
-    </div>`;
-  });
-  h+=`<button class="btn btn-g" onclick="saveAdminMetas()">Salvar metas</button>`;
-  el.innerHTML=h;
-}
-function updateMetaTotal(k){
-  const ml=parseInt(document.getElementById('ml_'+k)?.value)||0;
-  const nl=parseInt(document.getElementById('nl_'+k)?.value)||0;
-  const mt=document.getElementById('mt_'+k);
-  if(mt)mt.textContent=ml*nl;
-}
-
-function saveAdminMetas(){
-  if(!D)return;
-  D.inspetores.forEach(insp=>{
-    const k=insp.nome.replace(/[\s]/g,'_');
-    const ml=document.getElementById('ml_'+k);
-    const nl=document.getElementById('nl_'+k);
-    const mv=document.getElementById('mv_'+k);
-    if(ml)CFG.metas[insp.nome]={metaLinha:parseInt(ml.value)||72,nLinhas:parseInt(nl?.value)||1,desde:mv?mv.value:''};
-  });
-  saveCfg();alert('Metas salvas!');
-}
-
-function buildAdminParams(){
-  document.getElementById('ap-params').innerHTML=`
-    <div style="font-size:12px;color:#5a8a60;margin-bottom:14px">Altere os thresholds de classificação de performance. Afeta todo o dashboard imediatamente.</div>
-    <div style="display:flex;flex-direction:column;gap:10px">
-      <div class="field-row"><div class="field-label">Threshold "Atingiu" (mínimo)<div class="field-sub">Abaixo disso = Não atingiu</div></div>
-        <div style="display:flex;align-items:center;gap:6px"><input type="number" class="inp inp-w" id="p-atinge" value="${CFG.threshAtinge}" min="1" max="99"><span style="font-size:12px;color:#5a8a60">%</span></div>
-      </div>
-      <div class="field-row"><div class="field-label">Threshold "Superou" (mínimo)<div class="field-sub">Acima disso = Superou</div></div>
-        <div style="display:flex;align-items:center;gap=6px"><input type="number" class="inp inp-w" id="p-super" value="${CFG.threshSuper}" min="1" max="200"><span style="font-size:12px;color:#5a8a60">%</span></div>
-      </div>
-      <div style="background:#f0faf0;border-radius:8px;padding:10px 12px;font-size:12px;color:#5a8a60">
-        ✕ Não atingiu &lt; <strong id="preview-atinge">${CFG.threshAtinge}</strong>% · ● Atingiu <strong id="preview-atinge2">${CFG.threshAtinge}</strong>–<strong id="preview-super">${CFG.threshSuper}</strong>% · ✓ Superou ≥ <strong id="preview-super2">${CFG.threshSuper}</strong>%
-      </div>
-      <button class="btn btn-g" onclick="saveAdminParams()">Salvar parâmetros</button>
-    </div>`;
-  document.getElementById('p-atinge').addEventListener('input',e=>{document.getElementById('preview-atinge').textContent=e.target.value;document.getElementById('preview-atinge2').textContent=e.target.value;});
-  document.getElementById('p-super').addEventListener('input',e=>{document.getElementById('preview-super').textContent=e.target.value;document.getElementById('preview-super2').textContent=e.target.value;});
-}
-
-function saveAdminParams(){
-  CFG.threshAtinge=parseInt(document.getElementById('p-atinge').value)||85;
-  CFG.threshSuper=parseInt(document.getElementById('p-super').value)||95;
-  saveCfg();alert('Parâmetros salvos!');render();
-}
-
-function buildAdminMotivos(){
-  const renderList=()=>{
-    document.getElementById('motivos-list').innerHTML=CFG.motivos.map((m,i)=>`<div class="motivo-item"><span style="font-size:12px;color:#1a2e1a;flex:1">${m}</span><button onclick="removeMotivo(${i})" style="background:none;border:none;cursor:pointer;color:#e65100;font-size:14px">✕</button></div>`).join('');
-  };
-  document.getElementById('ap-motivos').innerHTML=`
-    <div style="font-size:12px;color:#5a8a60;margin-bottom:12px">Gerencie os motivos disponíveis para justificativa.</div>
-    <div id="motivos-list"></div>
-    <div style="display:flex;gap:8px;margin-top:12px">
-      <input type="text" class="inp inp-full" id="novo-motivo" placeholder="Novo motivo..." onkeydown="if(event.key==='Enter')addMotivo()">
-      <button class="btn btn-g btn-sm" onclick="addMotivo()">Adicionar</button>
-    </div>`;
-  renderList();
-}
-
-function addMotivo(){const v=document.getElementById('novo-motivo').value.trim();if(!v)return;CFG.motivos.push(v);document.getElementById('novo-motivo').value='';saveCfg();buildAdminMotivos();}
-function removeMotivo(i){CFG.motivos.splice(i,1);saveCfg();buildAdminMotivos();}
-
-function buildAdminAcessos(){
-  if(!D)return;
-  let h=`<div style="font-size:12px;color:#5a8a60;margin-bottom:12px">Defina a senha de acesso individual de cada inspetor para justificar resultados.</div>`;
-  D.inspetores.forEach(insp=>{
-    const key=insp.nome;
-    const saved=CFG.acessos[key]||'';
-    const k=key.replace(/[\s]/g,'_');
-    h+=`<div class="field-row"><div class="field-label">${insp.nome}<div class="field-sub">Turno ${getTurno(insp.nome)}</div></div>
-      <div style="display:flex;gap:6px;align-items:center">
-        <input type="text" class="inp inp-pw" id="ac_${k}" value="${saved}" placeholder="Senha...">
-        <button class="btn btn-sm" onclick="gerarSenha('${k}','${insp.nome}')">Gerar</button>
-      </div>
-    </div>`;
-  });
-  h+=`<button class="btn btn-g" style="margin-top:10px" onclick="saveAdminAcessos()">Salvar senhas</button>`;
-  document.getElementById('ap-acessos').innerHTML=h;
-}
-
-function gerarSenha(k,nome){const p=nome.split(' ')[0].toLowerCase().slice(0,3)+Math.floor(1000+Math.random()*9000);document.getElementById('ac_'+k).value=p;}
-function saveAdminAcessos(){
-  if(!D)return;
-  D.inspetores.forEach(insp=>{const k=insp.nome.replace(/[\s]/g,'_');const el=document.getElementById('ac_'+k);if(el)CFG.acessos[insp.nome]=el.value;});
-  saveCfg();alert('Senhas salvas!');
-}
-
-function buildAdminJust(){
-  const el=document.getElementById('ap-justadmin');
-  if(!el||!D)return;
-
-  // Collect all justificativas from localStorage
-  const all=[];
-  try{
-    for(let i=0;i<localStorage.length;i++){
-      const k=localStorage.key(i);
-      if(k&&k.startsWith('just_')){
-        const raw=localStorage.getItem(k);
-        if(raw){
-          const j=JSON.parse(raw);
-          const parts=k.replace('just_','').split('|');
-          const nome=parts[0];
-          const dia=parts[1];
-          all.push({nome,dia,motivo:j.motivo,obs:j.obs||'',ts:j.ts||'',key:k});
-        }
-      }
+    if(d.success){
+      setProgress(100);
+      ss('- Dashboard atualizado!<br>Dias: '+d.days.join(', '),'ok');
+      setTimeout(()=>window.location.href='/?t='+Date.now(),2500);
+    }else{
+      ss('- Erro: '+d.error,'err');
+      document.getElementById('btn').disabled=false;
     }
-  }catch(e){}
-
-  if(!all.length){
-    el.innerHTML='<div style="text-align:center;padding:30px;color:#5a8a60;font-size:13px">Nenhuma justificativa registrada ainda.</div>';
-    return;
+  }catch(e){
+    if(e.name==='TimeoutError'||e.name==='AbortError'){
+      ss('- O arquivo demorou demais. Tenta enviar separado por dia.','err');
+    }else{
+      ss('- Erro de conex-o: '+e.message+'. Tenta novamente.','err');
+    }
+    document.getElementById('btn').disabled=false;
   }
-
-  // Sort by dia desc
-  all.sort((a,b)=>b.dia.localeCompare(a.dia));
-
-  let h=`<div style="font-size:12px;color:#5a8a60;margin-bottom:12px">${all.length} justificativa${all.length!==1?'s':''} registrada${all.length!==1?'s':''}. Clica em Editar ou Apagar para gerenciar.</div>`;
-
-  all.forEach((j,idx)=>{
-    const insp=D.inspetores.find(x=>x.nome===j.nome);
-    const d=insp?.dias[j.dia];
-    h+=`<div id="just-admin-item-${idx}" style="background:#fff;border:1px solid #e8f5e9;border-radius:8px;padding:10px 12px;margin-bottom:8px">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:10px">
-        <div style="flex:1">
-          <div style="font-size:13px;font-weight:700;color:#1a2e1a">${j.nome}</div>
-          <div style="font-size:11px;color:#5a8a60;margin-top:2px">Dia: ${j.dia} · ${d?d.pct+'% da meta':'sem dado'}</div>
-          <div style="margin-top:6px;background:#fff8e1;border-radius:6px;padding:6px 8px;font-size:12px;color:#5d4037">
-            💬 <strong>${j.motivo}</strong>${j.obs?'<br><span style="color:#6d4c41">'+j.obs+'</span>':''}
-          </div>
-          ${j.ts?`<div style="font-size:10px;color:#9e9e9e;margin-top:3px">Registrado: ${j.ts}</div>`:''}
-        </div>
-        <div style="display:flex;flex-direction:column;gap:5px;flex-shrink:0">
-          <button class="btn btn-sm" onclick="editAdminJust(${idx})" style="color:#1565C0;border-color:#90caf9;font-size:11px">✏ Editar</button>
-          <button class="btn btn-sm" onclick="deleteAdminJust('${j.key}',${idx})" style="color:#e65100;border-color:#ffcc80;font-size:11px">🗑 Apagar</button>
-        </div>
-      </div>
-      <div id="just-admin-edit-${idx}" style="display:none;margin-top:10px;padding-top:10px;border-top:1px solid #e8f5e9">
-        <div style="display:flex;flex-direction:column;gap:8px">
-          <div>
-            <div style="font-size:11px;font-weight:600;color:#5a8a60;margin-bottom:3px">Motivo</div>
-            <select class="sel" id="jae-motivo-${idx}" style="width:100%">
-              ${CFG.motivos.map(m=>`<option ${j.motivo===m?'selected':''}>${m}</option>`).join('')}
-            </select>
-          </div>
-          <div>
-            <div style="font-size:11px;font-weight:600;color:#5a8a60;margin-bottom:3px">Observação</div>
-            <textarea class="inp inp-full" id="jae-obs-${idx}" rows="2" style="resize:none;font-size:12px">${j.obs||''}</textarea>
-          </div>
-          <div style="display:flex;gap:8px">
-            <button class="btn btn-g btn-sm" onclick="saveAdminJust('${j.key}',${idx})">Salvar</button>
-            <button class="btn btn-sm" onclick="cancelEditJust(${idx})">Cancelar</button>
-          </div>
-        </div>
-      </div>
-    </div>`;
-  });
-
-  el.innerHTML=h;
-  // Store all for reference
-  window._adminJusts=all;
 }
+</script></div></body></html>'''
 
-function editAdminJust(idx){
-  document.getElementById('just-admin-edit-'+idx).style.display='block';
-  document.querySelector(`#just-admin-item-${idx} button[onclick*='editAdminJust']`).style.display='none';
-}
-function cancelEditJust(idx){
-  document.getElementById('just-admin-edit-'+idx).style.display='none';
-  document.querySelector(`#just-admin-item-${idx} button[onclick*='editAdminJust']`).style.display='';
-}
-function saveAdminJust(key,idx){
-  const motivo=document.getElementById('jae-motivo-'+idx)?.value;
-  const obs=document.getElementById('jae-obs-'+idx)?.value||'';
-  if(!motivo)return;
-  try{
-    const existing=JSON.parse(localStorage.getItem(key)||'{}');
-    localStorage.setItem(key,JSON.stringify({...existing,motivo,obs,editadoEm:new Date().toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit'})}));
-  }catch(e){}
-  buildAdminJust();render();renderJustificativas();
-  alert('Justificativa atualizada!');
-}
-function deleteAdminJust(key,idx){
-  if(!confirm('Tem certeza que deseja apagar esta justificativa?'))return;
-  try{localStorage.removeItem(key);}catch(e){}
-  buildAdminJust();render();renderJustificativas();
-}
+@app.route('/upload', methods=['POST'])
+def upload():
+    API_KEY = os.environ.get('API_KEY', 'zagonel2026')
+    if request.headers.get('X-API-Key') != API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    if 'file' not in request.files:
+        return jsonify({"error": "Nenhum arquivo enviado"}), 400
 
-function buildAdminSenha(){
-  document.getElementById('ap-senha').innerHTML=`
-    <div style="font-size:12px;color:#5a8a60;margin-bottom:14px">Altere a senha do painel administrador.</div>
-    <div style="display:flex;flex-direction:column;gap:10px;max-width:280px">
-      <div><div style="font-size:11px;color:#5a8a60;margin-bottom:4px">Senha atual</div><input type="password" class="inp inp-full" id="pw-atual" placeholder="••••••"></div>
-      <div><div style="font-size:11px;color:#5a8a60;margin-bottom:4px">Nova senha</div><input type="password" class="inp inp-full" id="pw-nova" placeholder="••••••"></div>
-      <div><div style="font-size:11px;color:#5a8a60;margin-bottom:4px">Confirmar nova senha</div><input type="password" class="inp inp-full" id="pw-conf" placeholder="••••••"></div>
-      <div id="pw-err" style="color:#e65100;font-size:12px;display:none"></div>
-      <button class="btn btn-g" onclick="salvarSenhaAdmin()">Alterar senha</button>
-    </div>`;
-}
+    file = request.files['file']
+    tmp_path = f'/tmp/upload_{file.filename}'
+    file.save(tmp_path)
 
-function salvarSenhaAdmin(){
-  const atual=document.getElementById('pw-atual').value;
-  const nova=document.getElementById('pw-nova').value;
-  const conf=document.getElementById('pw-conf').value;
-  const err=document.getElementById('pw-err');
-  if(atual!==CFG.adminPw){err.textContent='Senha atual incorreta';err.style.display='block';return;}
-  if(nova.length<6){err.textContent='Nova senha muito curta (mín. 6 caracteres)';err.style.display='block';return;}
-  if(nova!==conf){err.textContent='Senhas não conferem';err.style.display='block';return;}
-  CFG.adminPw=nova;saveCfg();err.style.display='none';alert('Senha alterada com sucesso!');
-}
+    try:
+        # Read Excel ONCE
+        df_raw = pd.read_excel(tmp_path)
+        df_raw['_date'] = pd.to_datetime(df_raw['Data inicial'], dayfirst=True).dt.date
+        unique_dates = sorted(df_raw['_date'].unique())
 
-// ── LOGIN INSPETOR ──
-let pendingJustNome=null;
-function openInspLogin(nome){pendingJustNome=nome;document.getElementById('inspLogin').classList.add('open');const sel=document.getElementById('insp-login-sel');if(sel)sel.value=nome||'';document.getElementById('insp-login-pw').value='';document.getElementById('insp-login-err').style.display='none';}
-function closeInspLogin(){document.getElementById('inspLogin').classList.remove('open');pendingJustNome=null;}
-function checkInspLogin(){
-  const nome=document.getElementById('insp-login-sel').value;
-  const pw=document.getElementById('insp-login-pw').value;
-  const saved=CFG.acessos[nome];
-  if(!saved){document.getElementById('insp-login-err').textContent='Sem senha cadastrada. Contate o administrador.';document.getElementById('insp-login-err').style.display='block';return;}
-  if(pw!==saved){document.getElementById('insp-login-err').textContent='Senha incorreta';document.getElementById('insp-login-err').style.display='block';return;}
-  closeInspLogin();
-  openJustModal(nome);
-}
+        new_days_data = {}
+        for d in unique_dates:
+            label = f"{d.day:02d}/{d.month:02d}"
+            df_day = df_raw[df_raw['_date'] == d].copy()
 
-function openJustModal(nome){
-  const lastDay=day==='comp'?D.days[D.days.length-1]:day;
-  const insp=D.inspetores.find(x=>x.nome===nome);
-  if(!insp||!insp.dias[lastDay])return;
-  const d=insp.dias[lastDay];
-  if(d.status!=='NAO_ATINGIU'){alert('Justificativa necessária apenas para quem ficou abaixo da meta.');return;}
-  const existing=getJust(nome,lastDay);
-  document.getElementById('just-modal-title').textContent='Justificar · '+nome.split(' ')[0]+' · '+lastDay;
-  document.getElementById('just-modal-body').innerHTML=`
-    <div style="background:#fff8e1;border-radius:8px;padding:10px;margin-bottom:14px;font-size:12px;color:#5d4037">
-      Resultado: <strong>${d.pct}%</strong> da meta (${d.total}/${d.meta} peças)
-    </div>
-    <div style="display:flex;flex-direction:column;gap:10px">
-      <div><div style="font-size:11px;font-weight:700;color:#5a8a60;margin-bottom:4px">Motivo</div>
-        <select class="sel" id="just-motivo" style="width:100%">
-          <option value="">Seleciona o motivo...</option>
-          ${CFG.motivos.map(m=>`<option ${existing&&existing.motivo===m?'selected':''}>${m}</option>`).join('')}
-        </select>
-      </div>
-      <div><div style="font-size:11px;font-weight:700;color:#5a8a60;margin-bottom:4px">Observação (opcional)</div>
-        <textarea class="inp inp-full" id="just-obs" rows="3" placeholder="Detalhes adicionais...">${existing?.obs||''}</textarea>
-      </div>
-      <button class="btn btn-g" onclick="salvarJust('${nome}','${lastDay}')">Salvar justificativa</button>
-    </div>`;
-  document.getElementById('justModal').classList.add('open');
-}
+            insp = df_day[df_day['Item']=='Inspetor Respons-vel'][['C-digo da avalia-o','Resposta']].rename(columns={'Resposta':'Inspetor'})
+            insp['Inspetor'] = insp['Inspetor'].str.strip()
+            insp['Inspetor'] = insp['Inspetor'].str.replace(r'^Outro.*','Yenire',regex=True)
+            insp['Inspetor'] = insp['Inspetor'].str.replace('Yenire Marquez','Yenire',regex=False)
+            insp['Inspetor'] = insp['Inspetor'].str.replace(r'^Andris$','Andris Antonio Rivero Romero',regex=True)
 
-function closeJust(){document.getElementById('justModal').classList.remove('open');}
-function salvarJust(nome,d){
-  const motivo=document.getElementById('just-motivo').value;
-  const obs=document.getElementById('just-obs').value;
-  if(!motivo){alert('Seleciona um motivo!');return;}
-  const key='just_'+nome+'|'+d;
-  const ts=new Date().toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  try{localStorage.setItem(key,JSON.stringify({motivo,obs,ts}));}catch(e){};
-  closeJust();render();renderJustificativas();
-  alert('Justificativa salva!');
-}
+            linha = df_day[df_day['Item']=='Linha de Montagem'][['C-digo da avalia-o','Resposta']].rename(columns={'Resposta':'Linha'})
+            aprov = df_day[df_day['Item']=='Aprova-o da Pe-a'].copy()
+            aprov['Produto'] = aprov['Tipo de Unidade'].str.replace(r'\s*-\s*PZO$','',regex=True).str.strip()
+            aprov = aprov.merge(insp, on='C-digo da avalia-o', how='left')
+            aprov = aprov.merge(linha, on='C-digo da avalia-o', how='left')
+            aprov['Linha'] = aprov['Linha'].fillna('')
+            aprov['Produto_Linha'] = aprov.apply(lambda r: f"{r['Produto']} - {r['Linha']}" if r['Linha'] else r['Produto'], axis=1)
 
-// ── INIT ──
-loadCfg();
-loadData();
-setInterval(()=>{if(D)loadData();},5*60*1000);
-</script>
-</body>
-</html>
+            by_pl = aprov.groupby(['Inspetor','Produto_Linha','Produto','Linha','Resposta']).size().unstack(fill_value=0).reset_index()
+            if 'Sim' not in by_pl.columns: by_pl['Sim'] = 0
+            if 'N-o' not in by_pl.columns: by_pl['N-o'] = 0
+            by_pl['Total'] = by_pl['Sim'] + by_pl['N-o']
+            by_pl['Meta'] = by_pl.apply(lambda r: get_meta(r['Inspetor'],r['Produto'],r['Linha']), axis=1)
+            by_pl['Pct'] = (by_pl['Total']/by_pl['Meta']).round(4)
+            by_pl['Status'] = by_pl['Pct'].apply(get_status)
+
+            if len(by_pl) > 0:
+                new_days_data[label] = by_pl
+
+        if not new_days_data:
+            return jsonify({"error": "Nenhum dado encontrado no arquivo"}), 400
+
+        # Merge with existing data
+        stored = load_data() or {"_raw": {}}
+        if "_raw" not in stored:
+            stored["_raw"] = {}
+
+        for label, df in new_days_data.items():
+            stored["_raw"][label] = df.to_dict(orient='records')
+
+        # Sort by date
+        def sort_key(lbl):
+            p = lbl.split('/')
+            return (int(p[1]), int(p[0]))
+
+        all_dfs = {lbl: pd.DataFrame(recs) for lbl, recs in stored["_raw"].items()}
+        all_dfs = dict(sorted(all_dfs.items(), key=lambda x: sort_key(x[0])))
+
+        result = build_result(all_dfs)
+        result["_raw"] = stored["_raw"]
+        save_data(result)
+
+        try: os.remove(tmp_path)
+        except: pass
+
+        return jsonify({
+            "success": True,
+            "days": list(all_dfs.keys()),
+            "message": f"Processado: {list(new_days_data.keys())}"
+        })
+
+    except Exception as e:
+        try: os.remove(tmp_path)
+        except: pass
+        return jsonify({"error": str(e)}), 500
+
+# Auto-restore from GitHub on startup if no local data
+def startup_restore():
+    if not os.path.exists(DATA_FILE):
+        print("No local data found, restoring from GitHub...")
+        data = github_load()
+        if data:
+            with open(DATA_FILE, 'w') as f:
+                json.dump(data, f, ensure_ascii=False)
+            print(f"Restored {len(data.get('days',[]))} days from GitHub")
+
+startup_restore()
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
