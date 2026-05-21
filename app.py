@@ -171,6 +171,26 @@ def save_data(data):
         json.dump(data, f, ensure_ascii=False)
     threading.Thread(target=github_save, args=(data,), daemon=True).start()
 
+@app.route('/restore')
+def restore():
+    """Force restore from GitHub backup"""
+    import os
+    # Delete local file to force reload from GitHub
+    if os.path.exists(DATA_FILE):
+        os.remove(DATA_FILE)
+    data = github_load()
+    if data:
+        with open(DATA_FILE, 'w') as f:
+            json.dump(data, f, ensure_ascii=False)
+        days = data.get('days', [])
+        return f'''<html><body style="font-family:sans-serif;padding:40px;text-align:center">
+            <h2 style="color:#22B04B">✅ Dados restaurados!</h2>
+            <p>Dias recuperados: {', '.join(days)}</p>
+            <p>Inspetores: {len(data.get('inspetores',[]))}</p>
+            <a href="/" style="display:inline-block;margin-top:20px;background:#22B04B;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600">Ir para o dashboard →</a>
+        </body></html>'''
+    return '<html><body style="padding:40px;text-align:center"><h2 style="color:#e65100">❌ Erro ao restaurar</h2><p>Backup não encontrado no GitHub.</p></body></html>', 500
+
 @app.route('/')
 def index():
     with open('index.html') as f:
