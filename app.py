@@ -243,17 +243,26 @@ function ss(m,t){const s=document.getElementById('st');s.textContent=m;s.classNa
 async function go(){
   if(!f)return;
   document.getElementById('btn').disabled=true;
-  ss('⏳ Acordando servidor...','loading');
-  try{await fetch('/data');}catch(e){}
-  ss('⏳ Processando arquivo...','loading');
+  ss('⏳ Acordando servidor... aguarda.','loading');
+  // Wake up server
+  for(let i=0;i<3;i++){try{const w=await fetch('/data');if(w.status!==403)break;}catch(e){}await new Promise(r=>setTimeout(r,3000));}
+  ss('⏳ Enviando e processando arquivo... pode levar até 2 minutos.','loading');
   const fd=new FormData();fd.append('file',f);
+  const ctrl=new AbortController();
+  const timer=setTimeout(()=>ctrl.abort(),180000); // 3 min timeout
   try{
-    const r=await fetch('/upload',{method:'POST',headers:{'X-API-Key':'zagonel2026'},body:fd});
+    const r=await fetch('/upload',{method:'POST',headers:{'X-API-Key':'zagonel2026'},body:fd,signal:ctrl.signal});
+    clearTimeout(timer);
     const txt=await r.text();let d;
-    try{d=JSON.parse(txt);}catch(e){ss('❌ Servidor ainda acordando — clica em Enviar novamente.','err');document.getElementById('btn').disabled=false;return;}
-    if(d.success){ss('✅ Atualizado! Dias: '+d.days.join(', '),'ok');setTimeout(()=>window.location.href='/',2000);}
+    try{d=JSON.parse(txt);}catch(e){ss('❌ Servidor retornou resposta inválida — tenta novamente.','err');document.getElementById('btn').disabled=false;return;}
+    if(d.success){ss('✅ Atualizado! Dias: '+d.days.join(', '),'ok');setTimeout(()=>window.location.href='/',2500);}
     else{ss('❌ Erro: '+d.error,'err');document.getElementById('btn').disabled=false;}
-  }catch(e){ss('❌ Timeout — tenta novamente.','err');document.getElementById('btn').disabled=false;}
+  }catch(e){
+    clearTimeout(timer);
+    if(e.name==='AbortError'){ss('❌ Timeout — arquivo muito grande. Tenta separar por dia.','err');}
+    else{ss('❌ Erro de conexão — tenta novamente.','err');}
+    document.getElementById('btn').disabled=false;
+  }
 }
 </script></div></body></html>'''
 
@@ -283,6 +292,7 @@ def upload():
     tmp_path = f'/tmp/upload_{file.filename}'
     file.save(tmp_path)
     try:
+        # Read Excel ONCE and reuse - avoids multiple slow reads
         df_raw = pd.read_excel(tmp_path)
         df_raw['_date'] = pd.to_datetime(df_raw['Data inicial'], dayfirst=True).dt.date
         unique_dates = sorted(df_raw['_date'].unique())
@@ -291,9 +301,29 @@ def upload():
             label = f"{d.day:02d}/{d.month:02d}"
             if date_label and len(unique_dates) == 1:
                 label = date_label
-            df_day = process_xlsx(tmp_path, f"{d.year}-{d.month:02d}-{d.day:02d}")
-            if len(df_day) > 0:
-                new_days_data[label] = df_day
+            # Process from already-loaded DataFrame (no re-read)
+            df_filtered = df_raw[df_raw['_date'] == d].copy()
+            insp = df_filtered[df_filtered['Item']=='Inspetor Responsável'][['Código da avaliação','Resposta']].rename(columns={'Resposta':'Inspetor'})
+            insp['Inspetor'] = insp['Inspetor'].str.strip()
+            insp['Inspetor'] = insp['Inspetor'].str.replace(r'^Outro.*','Yenire',regex=True)
+            insp['Inspetor'] = insp['Inspetor'].str.replace('Yenire Marquez','Yenire',regex=False)
+            insp['Inspetor'] = insp['Inspetor'].str.replace(r'^Andris$','Andris Antonio Rivero Romero',regex=True)
+            linha = df_filtered[df_filtered['Item']=='Linha de Montagem'][['Código da avaliação','Resposta']].rename(columns={'Resposta':'Linha'})
+            aprov = df_filtered[df_filtered['Item']=='Aprovação da Peça'].copy()
+            aprov['Produto'] = aprov['Tipo de Unidade'].str.replace(r'\s*-\s*PZO$','',regex=True).str.strip()
+            aprov = aprov.merge(insp, on='Código da avaliação', how='left')
+            aprov = aprov.merge(linha, on='Código da avaliação', how='left')
+            aprov['Linha'] = aprov['Linha'].fillna('')
+            aprov['Produto_Linha'] = aprov.apply(lambda r: f"{r['Produto']} — {r['Linha']}" if r['Linha'] else r['Produto'], axis=1)
+            by_pl = aprov.groupby(['Inspetor','Produto_Linha','Produto','Linha','Resposta']).size().unstack(fill_value=0).reset_index()
+            if 'Sim' not in by_pl.columns: by_pl['Sim'] = 0
+            if 'Não' not in by_pl.columns: by_pl['Não'] = 0
+            by_pl['Total'] = by_pl['Sim'] + by_pl['Não']
+            by_pl['Meta'] = by_pl.apply(lambda r: get_meta(r['Inspetor'],r['Produto'],r['Linha']), axis=1)
+            by_pl['Pct'] = (by_pl['Total']/by_pl['Meta']).round(4)
+            by_pl['Status'] = by_pl['Pct'].apply(get_status)
+            if len(by_pl) > 0:
+                new_days_data[label] = by_pl
         if not new_days_data:
             return jsonify({"error": "Nenhum dado encontrado"}), 400
         stored = load_data() or {"_raw": {}}
