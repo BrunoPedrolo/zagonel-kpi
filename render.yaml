@@ -3,12 +3,12 @@ services:
     name: zagonel-kpi
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --timeout 300 --workers 1 --worker-class sync --keep-alive 5
+    startCommand: gunicorn app:app --timeout 300 --workers 1 --worker-class sync
     envVars:
       - key: API_KEY
         value: zagonel2026
       - key: GITHUB_TOKEN
-        value: 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
+        value: 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
       - key: GITHUB_REPO
         value: BrunoPedrolo/zagonel-kpi
     disk:
