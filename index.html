@@ -209,6 +209,17 @@ body{background:#f4f6f4;color:#1a2e1a;font-family:-apple-system,BlinkMacSystemFo
   </div>
 </div>
 
+<!-- MODAL RELATÓRIO INDIVIDUAL -->
+<div class="modal-overlay" id="relOverlay">
+  <div class="modal" style="max-width:780px">
+    <div class="modal-h">
+      <div class="modal-title">📋 Relatório Individual</div>
+      <button onclick="closeRelatorio()" style="background:none;border:none;cursor:pointer;font-size:20px;color:#9e9e9e">✕</button>
+    </div>
+    <div id="rel-modal-content"></div>
+  </div>
+</div>
+
 <div class="dash">
   <div id="main-content"><div style="text-align:center;padding:60px;color:#5a8a60">⏳ Carregando dados...</div></div>
 </div>
@@ -261,11 +272,14 @@ function populateInspLogin(){
 function buildUI(){
   document.getElementById('main-content').innerHTML=`
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px;flex-wrap:wrap;gap:10px">
-      <div class="main-tabs" style="margin-bottom:0;border:none">
-        <div class="main-tab active" onclick="setMainTab('dashboard')">Dashboard</div>
-        <div class="main-tab" onclick="setMainTab('ranking')">Ranking</div>
-        <div class="main-tab" onclick="setMainTab('relatorio')">Relatório Individual</div>
-        <div class="main-tab" onclick="setMainTab('justificativas')">Justificativas</div>
+      <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+        <div class="main-tabs" style="margin-bottom:0;border:none">
+          <div class="main-tab active" onclick="setMainTab('dashboard')">Dashboard</div>
+          <div class="main-tab" onclick="setMainTab('justificativas')">Justificativas</div>
+        </div>
+        <div style="width:1px;height:28px;background:#d0e8d0"></div>
+        <button onclick="setMainTab('ranking')" id="btn-ranking" style="padding:6px 14px;font-size:12px;font-weight:600;border-radius:7px;border:1.5px solid #22B04B;background:#fff;color:#22B04B;cursor:pointer;transition:all .15s" onmouseover="this.style.background='#22B04B';this.style.color='#fff'" onmouseout="this.style.background=mainTab==='ranking'?'#22B04B':'#fff';this.style.color=mainTab==='ranking'?'#fff':'#22B04B'">📊 Ranking</button>
+        <button onclick="openRelatorio()" style="padding:6px 14px;font-size:12px;font-weight:600;border-radius:7px;border:1.5px solid #22B04B;background:#fff;color:#22B04B;cursor:pointer;transition:all .15s" onmouseover="this.style.background='#22B04B';this.style.color='#fff'" onmouseout="this.style.background='#fff';this.style.color='#22B04B'">📋 Relatório Individual</button>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
         <span style="font-size:11px;color:#5a8a60;background:#f0faf0;padding:4px 10px;border-radius:6px;border:1px solid #d0e8d0" id="last-update">Último: ${D.days[D.days.length-1]}</span>
@@ -274,16 +288,17 @@ function buildUI(){
     </div>
     <div id="p-dashboard" class="panel active"></div>
     <div id="p-ranking" class="panel"></div>
-    <div id="p-relatorio" class="panel"></div>
     <div id="p-justificativas" class="panel"></div>
   `;
-  buildDashboard();buildRanking();buildRelatorio();buildJustificativas();
+  buildDashboard();buildRanking();buildJustificativas();
 }
 
 function setMainTab(t){
   mainTab=t;
-  document.querySelectorAll('.main-tab').forEach((b,i)=>b.classList.toggle('active',['dashboard','ranking','relatorio','justificativas'][i]===t));
-  document.querySelectorAll('#p-dashboard,#p-ranking,#p-relatorio,#p-justificativas').forEach((p,i)=>p.classList.toggle('active',['dashboard','ranking','relatorio','justificativas'][i]===t));
+  document.querySelectorAll('.main-tab').forEach((b,i)=>b.classList.toggle('active',['dashboard','justificativas'][i]===t));
+  document.querySelectorAll('#p-dashboard,#p-ranking,#p-justificativas').forEach((p,i)=>p.classList.toggle('active',['dashboard','ranking','justificativas'][i]===t));
+  const rb=document.getElementById('btn-ranking');
+  if(rb){rb.style.background=t==='ranking'?'#22B04B':'#fff';rb.style.color=t==='ranking'?'#fff':'#22B04B';}
   if(t==='ranking')setTimeout(renderRankingCharts,100);
 }
 
@@ -665,38 +680,59 @@ function buildAdminContent(){
 function buildAdminMetas(){
   if(!D)return;
   const el=document.getElementById('ap-metas');
-  let h=`<div style="font-size:12px;color:#5a8a60;margin-bottom:12px">Ajuste a meta e a data de início de validade para cada inspetor e linha.</div>`;
+  let h=`<div style="font-size:12px;color:#5a8a60;margin-bottom:12px">Defina a meta de peças por dia e quantas linhas cada inspetor cobre. A meta total = meta/linha × nº de linhas.</div>`;
   D.inspetores.forEach(insp=>{
-    const dias=insp.dias;
-    const ref=Object.values(dias).find(Boolean);
+    const ref=Object.values(insp.dias).find(Boolean);
     if(!ref)return;
+    const key=insp.nome;
+    const saved=CFG.metas[key]||{};
+    const nLinhas=ref.linhas.length;
+    const metaLinha=ref.linhas[0]?ref.linhas[0].meta:72;
+    const k=key.replace(/[\s]/g,'_');
     h+=`<div style="background:#f9fef9;border:1px solid #e8f5e9;border-radius:8px;padding:10px;margin-bottom:8px">
-      <div style="font-size:12px;font-weight:700;color:#1a2e1a;margin-bottom:8px">${insp.nome}</div>
-      ${ref.linhas.map(l=>{const key=`${insp.nome}|${l.label}`;const saved=CFG.metas[key]||{};return`<div class="field-row"><div class="field-label">${l.label}<div class="field-sub">Meta atual: ${l.meta} peças/dia</div></div>
+      <div style="font-size:12px;font-weight:700;color:#1a2e1a;margin-bottom:8px">${insp.nome} <span style="font-size:10px;font-weight:400;color:#5a8a60">· Turno ${getTurno(insp.nome)}</span></div>
+      <div class="field-row">
+        <div class="field-label">Meta por linha (peças/dia)<div class="field-sub">Meta atual: ${metaLinha} peças/linha</div></div>
         <div style="display:flex;gap:6px;align-items:center">
-          <input type="number" class="inp inp-w" id="m_${key.replace(/[|\s]/g,'_')}" value="${saved.val||l.meta}" min="1">
+          <input type="number" class="inp inp-w" id="ml_${k}" value="${saved.metaLinha||metaLinha}" min="1" oninput="updateMetaTotal('${k}')">
           <span style="font-size:11px;color:#5a8a60">peças</span>
-          <input type="date" class="inp" style="width:130px" id="mv_${key.replace(/[|\s]/g,'_')}" value="${saved.desde||''}">
         </div>
-      </div>`;}).join('')}
+      </div>
+      <div class="field-row">
+        <div class="field-label">Nº de linhas que cobre<div class="field-sub">Atual: ${nLinhas} linha${nLinhas!==1?'s':''}</div></div>
+        <div style="display:flex;gap:6px;align-items:center">
+          <input type="number" class="inp inp-w" id="nl_${k}" value="${saved.nLinhas||nLinhas}" min="1" oninput="updateMetaTotal('${k}')">
+          <span style="font-size:11px;color:#5a8a60">linhas</span>
+        </div>
+      </div>
+      <div class="field-row">
+        <div class="field-label">Meta total do dia<div class="field-sub">= meta/linha × nº linhas</div></div>
+        <div style="font-size:16px;font-weight:700;color:#22B04B" id="mt_${k}">${(saved.metaLinha||metaLinha)*(saved.nLinhas||nLinhas)}</div>
+      </div>
+      <div class="field-row">
+        <div class="field-label">Válido a partir de</div>
+        <input type="date" class="inp" style="width:140px" id="mv_${k}" value="${saved.desde||''}">
+      </div>
     </div>`;
   });
   h+=`<button class="btn btn-g" onclick="saveAdminMetas()">Salvar metas</button>`;
   el.innerHTML=h;
 }
+function updateMetaTotal(k){
+  const ml=parseInt(document.getElementById('ml_'+k)?.value)||0;
+  const nl=parseInt(document.getElementById('nl_'+k)?.value)||0;
+  const mt=document.getElementById('mt_'+k);
+  if(mt)mt.textContent=ml*nl;
+}
 
 function saveAdminMetas(){
   if(!D)return;
   D.inspetores.forEach(insp=>{
-    const ref=Object.values(insp.dias).find(Boolean);
-    if(!ref)return;
-    ref.linhas.forEach(l=>{
-      const key=`${insp.nome}|${l.label}`;
-      const k=key.replace(/[|\s]/g,'_');
-      const vi=document.getElementById('m_'+k);
-      const vd=document.getElementById('mv_'+k);
-      if(vi)CFG.metas[key]={val:parseInt(vi.value),desde:vd?vd.value:''};
-    });
+    const k=insp.nome.replace(/[\s]/g,'_');
+    const ml=document.getElementById('ml_'+k);
+    const nl=document.getElementById('nl_'+k);
+    const mv=document.getElementById('mv_'+k);
+    if(ml)CFG.metas[insp.nome]={metaLinha:parseInt(ml.value)||72,nLinhas:parseInt(nl?.value)||1,desde:mv?mv.value:''};
   });
   saveCfg();alert('Metas salvas!');
 }
