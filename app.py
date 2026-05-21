@@ -285,7 +285,7 @@ async function go(){
     if(d.success){
       setProgress(100);
       ss('✅ Dashboard atualizado!<br>Dias: '+d.days.join(', '),'ok');
-      setTimeout(()=>window.location.href='/',2500);
+      setTimeout(()=>window.location.href='/?t='+Date.now(),2500);
     }else{
       ss('❌ Erro: '+d.error,'err');
       document.getElementById('btn').disabled=false;
