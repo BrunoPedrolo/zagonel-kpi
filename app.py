@@ -386,5 +386,17 @@ def upload():
         except: pass
         return jsonify({"error": str(e)}), 500
 
+# Auto-restore from GitHub on startup if no local data
+def startup_restore():
+    if not os.path.exists(DATA_FILE):
+        print("No local data found, restoring from GitHub...")
+        data = github_load()
+        if data:
+            with open(DATA_FILE, 'w') as f:
+                json.dump(data, f, ensure_ascii=False)
+            print(f"Restored {len(data.get('days',[]))} days from GitHub")
+
+startup_restore()
+
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
