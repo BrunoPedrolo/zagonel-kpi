@@ -239,7 +239,7 @@ da.addEventListener('dragover',e=>{e.preventDefault();da.classList.add('drag')})
 da.addEventListener('dragleave',()=>da.classList.remove('drag'));
 da.addEventListener('drop',e=>{e.preventDefault();da.classList.remove('drag');hf(e.dataTransfer.files[0])});
 function hf(x){
-  if(!x||!x.name.endsWith('.xlsx')){ss('Apenas arquivos .xlsx s-o aceitos.','err');return;}
+  if(!x||!x.name.endsWith('.xlsx')){ss('Apenas arquivos .xlsx são aceitos.','err');return;}
   f=x;
   document.getElementById('fn').textContent='- '+x.name+' ('+Math.round(x.size/1024)+'KB)';
   document.getElementById('btn').disabled=false;
@@ -255,7 +255,7 @@ async function go(){
   if(!f)return;
   document.getElementById('btn').disabled=true;
   setProgress(10);
-  ss('- Acordando servidor...','loading');
+  ss('⏳ Acordando servidor...','loading');
 
   // Wake up server with retries
   let serverOk=false;
@@ -292,17 +292,17 @@ async function go(){
     }
     if(d.success){
       setProgress(100);
-      ss('- Dashboard atualizado!<br>Dias: '+d.days.join(', '),'ok');
+      ss('✅ Dashboard atualizado!<br>Dias: '+d.days.join(', '),'ok');
       setTimeout(()=>window.location.href='/?t='+Date.now(),2500);
     }else{
-      ss('- Erro: '+d.error,'err');
+      ss('❌ Erro: '+d.error,'err');
       document.getElementById('btn').disabled=false;
     }
   }catch(e){
     if(e.name==='TimeoutError'||e.name==='AbortError'){
       ss('- O arquivo demorou demais. Tenta enviar separado por dia.','err');
     }else{
-      ss('- Erro de conex-o: '+e.message+'. Tenta novamente.','err');
+      ss('❌ Erro de conexão: '+e.message+'. Tenta novamente.','err');
     }
     document.getElementById('btn').disabled=false;
   }
@@ -332,24 +332,24 @@ def upload():
             label = f"{d.day:02d}/{d.month:02d}"
             df_day = df_raw[df_raw['_date'] == d].copy()
 
-            insp = df_day[df_day['Item']=='Inspetor Respons-vel'][['C-digo da avalia-o','Resposta']].rename(columns={'Resposta':'Inspetor'})
+            insp = df_day[df_day['Item']=='Inspetor Responsável'][['Código da avaliação','Resposta']].rename(columns={'Resposta':'Inspetor'})
             insp['Inspetor'] = insp['Inspetor'].str.strip()
             insp['Inspetor'] = insp['Inspetor'].str.replace(r'^Outro.*','Yenire',regex=True)
             insp['Inspetor'] = insp['Inspetor'].str.replace('Yenire Marquez','Yenire',regex=False)
             insp['Inspetor'] = insp['Inspetor'].str.replace(r'^Andris$','Andris Antonio Rivero Romero',regex=True)
 
-            linha = df_day[df_day['Item']=='Linha de Montagem'][['C-digo da avalia-o','Resposta']].rename(columns={'Resposta':'Linha'})
-            aprov = df_day[df_day['Item']=='Aprova-o da Pe-a'].copy()
+            linha = df_day[df_day['Item']=='Linha de Montagem'][['Código da avaliação','Resposta']].rename(columns={'Resposta':'Linha'})
+            aprov = df_day[df_day['Item']=='Aprovação da Peça'].copy()
             aprov['Produto'] = aprov['Tipo de Unidade'].str.replace(r'\s*-\s*PZO$','',regex=True).str.strip()
-            aprov = aprov.merge(insp, on='C-digo da avalia-o', how='left')
-            aprov = aprov.merge(linha, on='C-digo da avalia-o', how='left')
+            aprov = aprov.merge(insp, on='Código da avaliação', how='left')
+            aprov = aprov.merge(linha, on='Código da avaliação', how='left')
             aprov['Linha'] = aprov['Linha'].fillna('')
             aprov['Produto_Linha'] = aprov.apply(lambda r: f"{r['Produto']} - {r['Linha']}" if r['Linha'] else r['Produto'], axis=1)
 
             by_pl = aprov.groupby(['Inspetor','Produto_Linha','Produto','Linha','Resposta']).size().unstack(fill_value=0).reset_index()
             if 'Sim' not in by_pl.columns: by_pl['Sim'] = 0
-            if 'N-o' not in by_pl.columns: by_pl['N-o'] = 0
-            by_pl['Total'] = by_pl['Sim'] + by_pl['N-o']
+            if 'Não' not in by_pl.columns: by_pl['Não'] = 0
+            by_pl['Total'] = by_pl['Sim'] + by_pl['Não']
             by_pl['Meta'] = by_pl.apply(lambda r: get_meta(r['Inspetor'],r['Produto'],r['Linha']), axis=1)
             by_pl['Pct'] = (by_pl['Total']/by_pl['Meta']).round(4)
             by_pl['Status'] = by_pl['Pct'].apply(get_status)
