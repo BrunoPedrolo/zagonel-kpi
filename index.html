@@ -434,7 +434,25 @@ function renderProdutos(){
 // ── RANKING ──
 function buildRanking(){
   const d=document.getElementById('p-ranking');
+  const anos=[...new Set(D.days.map(d=>d.split('/')[2]||'2026'))];
+  const meses=[...new Set(D.days.map(d=>d.split('/')[1]))];
+  const nomeMes=m=>({'04':'Abril','05':'Maio','06':'Junho','07':'Julho','08':'Agosto','09':'Setembro','10':'Outubro','11':'Novembro','12':'Dezembro'}[m]||m);
   d.innerHTML=`
+    <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:14px;padding:10px 14px;background:#fff;border:1.5px solid #d0e8d0;border-radius:10px">
+      <span style="font-size:12px;font-weight:600;color:#3a6e3a">Período:</span>
+      <select class="sel" id="rk-ano" onchange="filterRanking()" style="min-width:90px">
+        <option value="">Todos os anos</option>
+        ${anos.map(a=>`<option value="${a}">${a}</option>`).join('')}
+      </select>
+      <select class="sel" id="rk-mes" onchange="filterRanking()" style="min-width:110px">
+        <option value="">Todos os meses</option>
+        ${meses.map(m=>`<option value="${m}">${nomeMes(m)}</option>`).join('')}
+      </select>
+      <div style="display:flex;gap:6px;flex-wrap:wrap" id="rk-day-chips">
+        <div class="fchip active" id="rk-all" onclick="filterRankingDay('')">Todos os dias</div>
+        ${D.days.map(d=>`<div class="fchip" id="rk-d-${d.replace('/','')}" onclick="filterRankingDay('${d}')">${d}</div>`).join('')}
+      </div>
+    </div>
     <div class="kpi-grid" style="margin-bottom:14px">
       <div class="kpi-card"><div class="kl">Maior atingimento</div><div id="r-maior" class="kv" style="color:#22B04B">—</div><div id="r-maior-sub" class="ks"></div></div>
       <div class="kpi-card"><div class="kl">Média do time</div><div id="r-media" class="kv">—</div><div class="ks">todos os dias</div></div>
@@ -454,6 +472,43 @@ function buildRanking(){
   `;
 }
 
+function filterRanking(){
+  const ano=document.getElementById('rk-ano')?.value||'';
+  const mes=document.getElementById('rk-mes')?.value||'';
+  // Update day chips visibility
+  const chips=document.getElementById('rk-day-chips');
+  if(chips){
+    D.days.forEach(d=>{
+      const el=document.getElementById('rk-d-'+d.replace('/',''));
+      if(!el)return;
+      const [dd,mm]=d.split('/');
+      const show=(!mes||mm===mes)&&(!ano||true); // ano always matches for now
+      el.style.display=show?'':'none';
+    });
+  }
+  rankingDayFilter='';
+  document.getElementById('rk-all')?.classList.add('active');
+  D.days.forEach(d=>document.getElementById('rk-d-'+d.replace('/',''))?.classList.remove('active'));
+  renderRankingCharts();
+}
+function filterRankingDay(d){
+  rankingDayFilter=d;
+  document.getElementById('rk-all')?.classList.toggle('active',d==='');
+  D.days.forEach(dd=>document.getElementById('rk-d-'+dd.replace('/',''))?.classList.toggle('active',dd===d));
+  renderRankingCharts();
+}
+let rankingDayFilter='';
+
+function getRankingDays(){
+  const ano=document.getElementById('rk-ano')?.value||'';
+  const mes=document.getElementById('rk-mes')?.value||'';
+  if(rankingDayFilter)return[rankingDayFilter];
+  return D.days.filter(d=>{
+    const [dd,mm]=d.split('/');
+    return(!mes||mm===mes);
+  });
+}
+
 function renderRankingCharts(){
   if(!D)return;
   // Destroy old charts
@@ -462,17 +517,17 @@ function renderRankingCharts(){
 
   const G='#22B04B',GA='#66BB6A',GN='#e65100';
   const tc='rgba(90,138,90,0.8)',gc='rgba(34,176,75,0.12)';
-  const lastDay=D.days[D.days.length-1];
+  const activeDays=getRankingDays();const lastDay=activeDays[activeDays.length-1]||D.days[D.days.length-1];
   const lastSummary=D.inspetores.map(x=>{const d=x.dias[lastDay];return d?{nome:x.nome,pct:d.pct,status:d.status}:null;}).filter(Boolean);
 
   // Update KPIs
   let maxPct=0,maxName='',maxDay='';
-  D.days.forEach(d=>D.inspetores.forEach(x=>{if(x.dias[d]&&x.dias[d].pct>maxPct){maxPct=x.dias[d].pct;maxName=x.nome.split(' ')[0];maxDay=d;}}));
-  const allVals=D.days.map(d=>{const pr=D.inspetores.filter(x=>x.dias[d]);const tot=pr.reduce((a,x)=>a+x.dias[d].total,0);const met=pr.reduce((a,x)=>a+x.dias[d].meta,0);return met?Math.round(tot/met*1000)/10:0;});
+  activeDays.forEach(d=>D.inspetores.forEach(x=>{if(x.dias[d]&&x.dias[d].pct>maxPct){maxPct=x.dias[d].pct;maxName=x.nome.split(' ')[0];maxDay=d;}}));
+  const allVals=activeDays.map(d=>{const pr=D.inspetores.filter(x=>x.dias[d]);const tot=pr.reduce((a,x)=>a+x.dias[d].total,0);const met=pr.reduce((a,x)=>a+x.dias[d].meta,0);return met?Math.round(tot/met*1000)/10:0;});
   const mediaGeral=allVals.length?Math.round(allVals.reduce((a,b)=>a+b,0)/allVals.length*10)/10:0;
   // Consecutivos
   let maxConsec=0,maxConsecName='';
-  D.inspetores.forEach(x=>{let c=0,max=0;D.days.forEach(d=>{if(x.dias[d]&&x.dias[d].pct>=CFG.threshAtinge){c++;max=Math.max(max,c);}else c=0;});if(max>maxConsec){maxConsec=max;maxConsecName=x.nome.split(' ')[0];}}); 
+  D.inspetores.forEach(x=>{let c=0,max=0;activeDays.forEach(d=>{if(x.dias[d]&&x.dias[d].pct>=CFG.threshAtinge){c++;max=Math.max(max,c);}else c=0;});if(max>maxConsec){maxConsec=max;maxConsecName=x.nome.split(' ')[0];}}); 
   const pendentes=D.inspetores.filter(x=>{const d=x.dias[lastDay];return d&&d.status==='NAO_ATINGIU'&&!getJust(x.nome,lastDay);}).length;
 
   const el=n=>document.getElementById(n);
@@ -485,7 +540,7 @@ function renderRankingCharts(){
 
   // C1: Linha evolução
   const c1=el('rc1');if(c1){
-    chartInstances.c1=new Chart(c1,{type:'line',data:{labels:D.days,datasets:[{label:'% meta',data:allVals,borderColor:G,backgroundColor:gc,fill:true,tension:0.4,pointBackgroundColor:allVals.map(v=>v>=CFG.threshSuper?G:v>=CFG.threshAtinge?GA:GN),pointRadius:5,borderWidth:2},{label:'Meta',data:D.days.map(()=>CFG.threshAtinge),borderColor:'rgba(34,176,75,0.35)',borderDash:[5,4],borderWidth:1.5,pointRadius:0,fill:false}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{grid:{color:gc},ticks:{color:tc,font:{size:10}}},y:{grid:{color:gc},ticks:{color:tc,font:{size:10},callback:v=>v+'%'},min:0,max:Math.max(...allVals,100)+20}}}});
+    chartInstances.c1=new Chart(c1,{type:'line',data:{labels:activeDays,datasets:[{label:'% meta',data:allVals,borderColor:G,backgroundColor:gc,fill:true,tension:0.4,pointBackgroundColor:allVals.map(v=>v>=CFG.threshSuper?G:v>=CFG.threshAtinge?GA:GN),pointRadius:5,borderWidth:2},{label:'Meta',data:D.days.map(()=>CFG.threshAtinge),borderColor:'rgba(34,176,75,0.35)',borderDash:[5,4],borderWidth:1.5,pointRadius:0,fill:false}]},options:{responsive:true,plugins:{legend:{display:false}},scales:{x:{grid:{color:gc},ticks:{color:tc,font:{size:10}}},y:{grid:{color:gc},ticks:{color:tc,font:{size:10},callback:v=>v+'%'},min:0,max:Math.max(...allVals,100)+20}}}});
   }
 
   // C2: Pizza
@@ -498,7 +553,7 @@ function renderRankingCharts(){
   const leg=el('rc2-legend');if(leg){leg.innerHTML=[['#22B04B','Superou',ns],['#66BB6A','Atingiu',na],['#e65100','Não atingiu',nn]].map(([c,l,v])=>`<div style="display:flex;align-items:center;gap:7px"><div style="width:10px;height:10px;border-radius:50%;background:${c}"></div><span style="font-size:12px;color:#5a8a60">${l}</span><strong style="font-size:13px;margin-left:auto">${v}</strong></div>`).join('');}
 
   // C3: Ranking horizontal
-  const ranked=[...D.inspetores].map(x=>{const days=D.days.filter(d=>x.dias[d]);const tot=days.reduce((a,d)=>a+x.dias[d].total,0);const met=days.reduce((a,d)=>a+x.dias[d].meta,0);return{nome:x.nome.split(' ')[0],pct:met?Math.round(tot/met*1000)/10:0};}).sort((a,b)=>b.pct-a.pct);
+  const ranked=[...D.inspetores].map(x=>{const days=activeDays.filter(d=>x.dias[d]);const tot=days.reduce((a,d)=>a+x.dias[d].total,0);const met=days.reduce((a,d)=>a+x.dias[d].meta,0);return{nome:x.nome.split(' ')[0],pct:met?Math.round(tot/met*1000)/10:0};}).sort((a,b)=>b.pct-a.pct);
   const c3=el('rc3');if(c3){
     chartInstances.c3=new Chart(c3,{type:'bar',data:{labels:ranked.map(x=>x.nome),datasets:[{data:ranked.map(x=>x.pct),backgroundColor:ranked.map(x=>x.pct>=CFG.threshSuper?G:x.pct>=CFG.threshAtinge?GA:GN),borderRadius:4,borderSkipped:false}]},options:{indexAxis:'y',responsive:true,plugins:{legend:{display:false},tooltip:{callbacks:{label:c=>c.raw+'%'}}},scales:{x:{grid:{color:gc},ticks:{color:tc,font:{size:10},callback:v=>v+'%'},max:Math.max(...ranked.map(x=>x.pct))+20},y:{grid:{display:false},ticks:{color:tc,font:{size:10}}}}}});
   }
@@ -508,7 +563,7 @@ function renderRankingCharts(){
     c4.width=c4.parentElement.offsetWidth-28||300;
     const ctx=c4.getContext('2d');
     const names=D.inspetores.map(x=>x.nome.split(' ')[0]);
-    const dias=D.days;
+    const dias=activeDays;
     const ml=60,mt=22,cw=c4.width-ml-8,ch=c4.height-mt-4;
     const cW=cw/dias.length,cH=ch/names.length;
     ctx.clearRect(0,0,c4.width,c4.height);
@@ -550,28 +605,31 @@ function renderRankingCharts(){
   // C6: Barras agrupadas produto
   const c6=el('rc6');if(c6&&D.produtos){
     const colors=['rgba(34,176,75,0.6)','rgba(34,176,75,0.85)','rgba(34,176,75,1)','rgba(102,187,106,0.7)','rgba(102,187,106,0.9)'];
-    chartInstances.c6=new Chart(c6,{type:'bar',data:{labels:D.produtos.map(p=>p.nome.length>12?p.nome.substring(0,12)+'…':p.nome),datasets:D.days.map((d,i)=>{return{label:d,data:D.produtos.map(p=>p.dias[d]||0),backgroundColor:colors[i%colors.length],borderRadius:3};})},options:{responsive:true,plugins:{legend:{display:true,position:'top',labels:{color:tc,font:{size:10},boxWidth:10,padding:10}}},scales:{x:{grid:{display:false},ticks:{color:tc,font:{size:10}}},y:{grid:{color:gc},ticks:{color:tc,font:{size:10}}}}}});
+    chartInstances.c6=new Chart(c6,{type:'bar',data:{labels:D.produtos.map(p=>p.nome.length>12?p.nome.substring(0,12)+'…':p.nome),datasets:useDays.map((d,i)=>{return{label:d,data:D.produtos.map(p=>(p.dias[d]||0)),backgroundColor:colors[i%colors.length],borderRadius:3};})},options:{responsive:true,plugins:{legend:{display:true,position:'top',labels:{color:tc,font:{size:10},boxWidth:10,padding:10}}},scales:{x:{grid:{display:false},ticks:{color:tc,font:{size:10}}},y:{grid:{color:gc},ticks:{color:tc,font:{size:10}}}}}});
   }
 }
 
 // ── RELATÓRIO INDIVIDUAL ──
-function buildRelatorio(){
+function buildRelatorio(){} // handled by modal
+function openRelatorio(){
+  if(!D){alert('Carregando dados...');return;}
   const mesesUnicos=[...new Set(D.days.map(d=>d.split('/')[1]))];
-  document.getElementById('p-relatorio').innerHTML=`
-    <div class="rel-ctrl">
+  document.getElementById('rel-modal-content').innerHTML=`
+    <div class="rel-ctrl" style="margin-bottom:14px">
       <div class="rel-fld"><label class="rel-lbl">Colaborador</label>
         <select class="sel" id="rel-insp"><option value="">Seleciona...</option>${D.inspetores.map(x=>`<option value="${x.nome}">${x.nome}</option>`).join('')}</select>
       </div>
       <div class="rel-fld"><label class="rel-lbl">Mês</label>
-        <select class="sel" id="rel-mes" onchange="updateRelDias()""><option value="">Todos</option>${mesesUnicos.map(m=>`<option value="${m}">${m==='04'?'Abril':m==='05'?'Maio':m==='06'?'Junho':m==='07'?'Julho':m==='08'?'Agosto':m}/2026</option>`).join('')}</select>
+        <select class="sel" id="rel-mes" onchange="updateRelDias()"><option value="">Todos</option>${mesesUnicos.map(m=>`<option value="${m}">${m==='04'?'Abril':m==='05'?'Maio':m==='06'?'Junho':m==='07'?'Julho':m==='08'?'Agosto':m}/2026</option>`).join('')}</select>
       </div>
       <div class="rel-fld"><label class="rel-lbl">De</label><select class="sel" id="rel-de">${D.days.map(d=>`<option value="${d}">${d}</option>`).join('')}</select></div>
       <div class="rel-fld"><label class="rel-lbl">Até</label><select class="sel" id="rel-ate">${D.days.map((d,i)=>`<option value="${d}" ${i===D.days.length-1?'selected':''}>${d}</option>`).join('')}</select></div>
       <button class="btn btn-g" onclick="gerarRel()">Gerar relatório</button>
     </div>
     <div id="rel-output"></div>`;
+  document.getElementById('relOverlay').classList.add('open');
 }
-
+function closeRelatorio(){document.getElementById('relOverlay').classList.remove('open');}
 function updateRelDias(){
   const mes=document.getElementById('rel-mes').value;
   const dias=mes?D.days.filter(d=>d.split('/')[1]===mes):D.days;
@@ -636,7 +694,7 @@ function buildJustificativas(){
 
 function renderJustificativas(){
   const el=document.getElementById('p-justificativas');if(!el)return;
-  const lastDay=D.days[D.days.length-1];
+  const activeDays=getRankingDays();const lastDay=activeDays[activeDays.length-1]||D.days[D.days.length-1];
   const abaixo=D.inspetores.filter(x=>{const d=x.dias[lastDay];return d&&d.status==='NAO_ATINGIU';});
   const pendentes=abaixo.filter(x=>!getJust(x.nome,lastDay));
   const justificados=abaixo.filter(x=>getJust(x.nome,lastDay));
