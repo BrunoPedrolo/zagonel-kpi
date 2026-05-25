@@ -7,6 +7,41 @@ app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "*"}})
 
 DATA_FILE = 'data.json'
+CONFIG_FILE = 'config.json'
+
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    return {'acessos': {}, 'motivos': ['Falta de material','Manutencao de equipamento','Absenteismo','Treinamento / integracao','Problema no processo','Outro'], 'threshAtinge': 85, 'threshSuper': 95, 'metas': {}}
+
+def save_config(cfg):
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(cfg, f, ensure_ascii=False)
+    # Backup to GitHub
+    threading.Thread(target=github_save_config, args=(cfg,), daemon=True).start()
+
+def github_save_config(cfg):
+    if not GITHUB_TOKEN: return
+    try:
+        content_b64 = base64.b64encode(json.dumps(cfg, ensure_ascii=False).encode()).decode()
+        # Get SHA if exists
+        sha = None
+        try:
+            url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/config.json'
+            req = urllib.request.Request(url, headers={'Authorization': f'token {GITHUB_TOKEN}','Accept': 'application/vnd.github.v3+json'})
+            with urllib.request.urlopen(req, timeout=10) as r:
+                sha = json.loads(r.read())['sha']
+        except: pass
+        payload = {"message": "Auto backup config", "content": content_b64}
+        if sha: payload["sha"] = sha
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/config.json'
+        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
+            headers={'Authorization': f'token {GITHUB_TOKEN}','Accept': 'application/vnd.github.v3+json','Content-Type': 'application/json'}, method='PUT')
+        urllib.request.urlopen(req, timeout=15)
+        print("Config backup OK")
+    except Exception as e:
+        print(f"Config backup failed: {e}")
 
 META_MAP = [
     ('Alicia',    'DUCHA DUCALI',   '',          72),
@@ -310,6 +345,21 @@ async function go(){
 }
 </script></div></body></html>'''
 
+@app.route('/config', methods=['GET'])
+def get_config():
+    return jsonify(load_config())
+
+@app.route('/config', methods=['POST'])
+def set_config():
+    API_KEY = os.environ.get('API_KEY', 'zagonel2026')
+    if request.headers.get('X-API-Key') != API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    cfg = request.json
+    if not cfg:
+        return jsonify({"error": "No data"}), 400
+    save_config(cfg)
+    return jsonify({"success": True})
+
 @app.route('/upload', methods=['POST'])
 def upload():
     API_KEY = os.environ.get('API_KEY', 'zagonel2026')
@@ -397,7 +447,23 @@ def upload():
         return jsonify({"error": str(e)}), 500
 
 # Auto-restore from GitHub on startup if no local data
-def startup_restore():
+def startup_restore()
+
+# Restore config from GitHub if not local
+def startup_restore_config():
+    if not os.path.exists(CONFIG_FILE):
+        try:
+            raw_url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/config.json'
+            req = urllib.request.Request(raw_url)
+            with urllib.request.urlopen(req, timeout=10) as r:
+                cfg = json.loads(r.read())
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(cfg, f, ensure_ascii=False)
+            print("Config restored from GitHub")
+        except Exception as e:
+            print(f"Config restore failed: {e}")
+
+startup_restore_config():
     if not os.path.exists(DATA_FILE):
         print("No local data, restoring from GitHub raw...")
         try:
@@ -412,6 +478,22 @@ def startup_restore():
             print(f"Restore failed: {e}")
 
 startup_restore()
+
+# Restore config from GitHub if not local
+def startup_restore_config():
+    if not os.path.exists(CONFIG_FILE):
+        try:
+            raw_url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/config.json'
+            req = urllib.request.Request(raw_url)
+            with urllib.request.urlopen(req, timeout=10) as r:
+                cfg = json.loads(r.read())
+            with open(CONFIG_FILE, 'w') as f:
+                json.dump(cfg, f, ensure_ascii=False)
+            print("Config restored from GitHub")
+        except Exception as e:
+            print(f"Config restore failed: {e}")
+
+startup_restore_config()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
