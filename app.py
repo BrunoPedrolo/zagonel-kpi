@@ -9,40 +9,6 @@ CORS(app, resources={r"/*": {"origins": "*"}})
 DATA_FILE = 'data.json'
 CONFIG_FILE = 'config.json'
 
-def load_config():
-    if os.path.exists(CONFIG_FILE):
-        with open(CONFIG_FILE) as f:
-            return json.load(f)
-    return {'acessos': {}, 'motivos': ['Falta de material','Manutencao de equipamento','Absenteismo','Treinamento / integracao','Problema no processo','Outro'], 'threshAtinge': 85, 'threshSuper': 95, 'metas': {}}
-
-def save_config(cfg):
-    with open(CONFIG_FILE, 'w') as f:
-        json.dump(cfg, f, ensure_ascii=False)
-    # Backup to GitHub
-    threading.Thread(target=github_save_config, args=(cfg,), daemon=True).start()
-
-def github_save_config(cfg):
-    if not GITHUB_TOKEN: return
-    try:
-        content_b64 = base64.b64encode(json.dumps(cfg, ensure_ascii=False).encode()).decode()
-        # Get SHA if exists
-        sha = None
-        try:
-            url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/config.json'
-            req = urllib.request.Request(url, headers={'Authorization': f'token {GITHUB_TOKEN}','Accept': 'application/vnd.github.v3+json'})
-            with urllib.request.urlopen(req, timeout=10) as r:
-                sha = json.loads(r.read())['sha']
-        except: pass
-        payload = {"message": "Auto backup config", "content": content_b64}
-        if sha: payload["sha"] = sha
-        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/config.json'
-        req = urllib.request.Request(url, data=json.dumps(payload).encode(),
-            headers={'Authorization': f'token {GITHUB_TOKEN}','Accept': 'application/vnd.github.v3+json','Content-Type': 'application/json'}, method='PUT')
-        urllib.request.urlopen(req, timeout=15)
-        print("Config backup OK")
-    except Exception as e:
-        print(f"Config backup failed: {e}")
-
 META_MAP = [
     ('Alicia',    'DUCHA DUCALI',   '',          72),
     ('Ana Paula', 'AQUECEDOR',      '',         150),
@@ -123,76 +89,89 @@ def build_result(days_data):
         result["produtos"].append(obj)
     return result
 
-# - GitHub -
+# GitHub
 GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
 GITHUB_REPO  = os.environ.get('GITHUB_REPO', 'BrunoPedrolo/zagonel-kpi')
-GITHUB_FILE  = 'data.json'
 
-def github_get_sha():
+def github_save_file(filename, data_str, commit_msg):
+    if not GITHUB_TOKEN:
+        return
     try:
-        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
-        req = urllib.request.Request(url, headers={
-            'Authorization': f'token {GITHUB_TOKEN}',
-            'Accept': 'application/vnd.github.v3+json'
-        })
-        with urllib.request.urlopen(req, timeout=10) as r:
-            return json.loads(r.read())['sha']
-    except: return None
-
-def github_save(data):
-    if not GITHUB_TOKEN: return
-    try:
-        content = base64.b64encode(json.dumps(data, ensure_ascii=False).encode()).decode()
-        sha = github_get_sha()
-        payload = {"message": "Auto backup KPI data", "content": content}
-        if sha: payload["sha"] = sha
-        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
+        content_b64 = base64.b64encode(data_str.encode()).decode()
+        sha = None
+        try:
+            url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}'
+            req = urllib.request.Request(url, headers={
+                'Authorization': f'token {GITHUB_TOKEN}',
+                'Accept': 'application/vnd.github.v3+json'
+            })
+            with urllib.request.urlopen(req, timeout=10) as r:
+                sha = json.loads(r.read())['sha']
+        except:
+            pass
+        payload = {"message": commit_msg, "content": content_b64}
+        if sha:
+            payload["sha"] = sha
+        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{filename}'
         req = urllib.request.Request(url, data=json.dumps(payload).encode(),
             headers={'Authorization': f'token {GITHUB_TOKEN}',
                      'Accept': 'application/vnd.github.v3+json',
                      'Content-Type': 'application/json'}, method='PUT')
         urllib.request.urlopen(req, timeout=15)
-        print("GitHub backup OK")
+        print(f"{filename} backup OK")
     except Exception as e:
-        print(f"GitHub backup failed: {e}")
+        print(f"{filename} backup failed: {e}")
 
-def github_load():
-    # Try raw URL first (works for public repos without token)
+def github_load_raw(filename):
     try:
-        raw_url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/{GITHUB_FILE}'
-        req = urllib.request.Request(raw_url)
+        url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/{filename}'
+        req = urllib.request.Request(url)
         with urllib.request.urlopen(req, timeout=10) as r:
-            return json.loads(r.read())
-    except: pass
-    # Fallback to API with token
-    try:
-        url = f'https://api.github.com/repos/{GITHUB_REPO}/contents/{GITHUB_FILE}'
-        req = urllib.request.Request(url, headers={
-            'Authorization': f'token {GITHUB_TOKEN}',
-            'Accept': 'application/vnd.github.v3+json'
-        })
-        with urllib.request.urlopen(req, timeout=10) as r:
-            content = json.loads(r.read())['content']
-            return json.loads(base64.b64decode(content).decode())
-    except: return None
+            return r.read().decode()
+    except:
+        return None
 
 def load_data():
     if os.path.exists(DATA_FILE):
         with open(DATA_FILE) as f:
             return json.load(f)
-    print("Local not found, restoring from GitHub...")
-    data = github_load()
-    if data:
+    raw = github_load_raw(DATA_FILE)
+    if raw:
+        data = json.loads(raw)
         with open(DATA_FILE, 'w') as f:
             json.dump(data, f, ensure_ascii=False)
-    return data
+        return data
+    return None
 
 def save_data(data):
     with open(DATA_FILE, 'w') as f:
         json.dump(data, f, ensure_ascii=False)
-    threading.Thread(target=github_save, args=(data,), daemon=True).start()
+    threading.Thread(target=github_save_file, args=(DATA_FILE, json.dumps(data, ensure_ascii=False), 'Auto backup KPI data'), daemon=True).start()
 
-# - Routes -
+def load_config():
+    if os.path.exists(CONFIG_FILE):
+        with open(CONFIG_FILE) as f:
+            return json.load(f)
+    raw = github_load_raw(CONFIG_FILE)
+    if raw:
+        cfg = json.loads(raw)
+        with open(CONFIG_FILE, 'w') as f:
+            json.dump(cfg, f, ensure_ascii=False)
+        return cfg
+    return {
+        'acessos': {},
+        'motivos': ['Falta de material','Manutencao de equipamento','Absenteismo','Treinamento / integracao','Problema no processo','Outro'],
+        'threshAtinge': 85,
+        'threshSuper': 95,
+        'metas': {}
+    }
+
+def save_config(cfg):
+    with open(CONFIG_FILE, 'w') as f:
+        json.dump(cfg, f, ensure_ascii=False)
+    threading.Thread(target=github_save_file, args=(CONFIG_FILE, json.dumps(cfg, ensure_ascii=False), 'Auto backup config'), daemon=True).start()
+
+# Routes
 @app.route('/')
 def index():
     with open('index.html') as f:
@@ -202,29 +181,38 @@ def index():
 def get_data():
     data = load_data()
     if not data:
-        data = github_load()
-        if data: save_data(data)
-    if not data:
         return jsonify({"error": "Sem dados ainda"}), 404
     clean = {k: v for k, v in data.items() if k != '_raw'}
     return jsonify(clean)
+
+@app.route('/config', methods=['GET'])
+def get_config():
+    return jsonify(load_config())
+
+@app.route('/config', methods=['POST'])
+def set_config():
+    API_KEY = os.environ.get('API_KEY', 'zagonel2026')
+    if request.headers.get('X-API-Key') != API_KEY:
+        return jsonify({"error": "Unauthorized"}), 401
+    cfg = request.json
+    if not cfg:
+        return jsonify({"error": "No data"}), 400
+    save_config(cfg)
+    return jsonify({"success": True})
 
 @app.route('/restore')
 def restore():
     if os.path.exists(DATA_FILE):
         os.remove(DATA_FILE)
-    data = github_load()
+    data = load_data()
     if data:
-        with open(DATA_FILE, 'w') as f:
-            json.dump(data, f, ensure_ascii=False)
         days = data.get('days', [])
         return f'''<html><body style="font-family:sans-serif;padding:40px;text-align:center">
-            <h2 style="color:#22B04B">- Dados restaurados!</h2>
+            <h2 style="color:#22B04B">Dados restaurados!</h2>
             <p>Dias: {', '.join(days)}</p>
-            <p>Inspetores: {len(data.get('inspetores',[]))}</p>
-            <a href="/" style="display:inline-block;margin-top:20px;background:#22B04B;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600">Ir para o dashboard -</a>
+            <a href="/" style="display:inline-block;margin-top:20px;background:#22B04B;color:#fff;padding:10px 24px;border-radius:8px;text-decoration:none;font-weight:600">Ir para o dashboard</a>
         </body></html>'''
-    return '<html><body style="padding:40px;text-align:center"><h2 style="color:#e65100">- Backup n-o encontrado</h2></body></html>', 500
+    return '<html><body style="padding:40px;text-align:center"><h2>Backup nao encontrado</h2></body></html>', 500
 
 @app.route('/upload-page')
 def upload_page():
@@ -255,7 +243,7 @@ a:hover{color:#22B04B}
 .progress-fill{height:100%;background:#22B04B;border-radius:2px;width:0%;transition:width .3s}
 </style></head>
 <body><div class="box">
-<h1>- Upload de Dados</h1>
+<h1>Upload de Dados</h1>
 <p>Faz upload do arquivo .xlsx exportado do sistema</p>
 <div class="ua" id="da" onclick="document.getElementById('fi').click()">
   <input type="file" id="fi" accept=".xlsx" onchange="hf(this.files[0])">
@@ -265,7 +253,7 @@ a:hover{color:#22B04B}
 <button id="btn" onclick="go()" disabled>Enviar e atualizar dashboard</button>
 <div class="progress" id="prog"><div class="progress-fill" id="prog-fill"></div></div>
 <div class="st" id="st"></div>
-<a href="/">- Ver dashboard</a>
+<a href="/">Ver dashboard</a>
 </div>
 <script>
 let f=null;
@@ -274,91 +262,46 @@ da.addEventListener('dragover',e=>{e.preventDefault();da.classList.add('drag')})
 da.addEventListener('dragleave',()=>da.classList.remove('drag'));
 da.addEventListener('drop',e=>{e.preventDefault();da.classList.remove('drag');hf(e.dataTransfer.files[0])});
 function hf(x){
-  if(!x||!x.name.endsWith('.xlsx')){ss('Apenas arquivos .xlsx são aceitos.','err');return;}
+  if(!x||!x.name.endsWith('.xlsx')){ss('Apenas arquivos .xlsx sao aceitos.','err');return;}
   f=x;
-  document.getElementById('fn').textContent='- '+x.name+' ('+Math.round(x.size/1024)+'KB)';
+  document.getElementById('fn').textContent='Arquivo: '+x.name+' ('+Math.round(x.size/1024)+'KB)';
   document.getElementById('btn').disabled=false;
 }
 function ss(m,t){const s=document.getElementById('st');s.innerHTML=m;s.className='st '+t;}
-function setProgress(p){
-  const prog=document.getElementById('prog');
-  prog.style.display='block';
-  document.getElementById('prog-fill').style.width=p+'%';
-}
-
+function setProgress(p){document.getElementById('prog').style.display='block';document.getElementById('prog-fill').style.width=p+'%';}
 async function go(){
   if(!f)return;
   document.getElementById('btn').disabled=true;
   setProgress(10);
-  ss('⏳ Acordando servidor...','loading');
-
-  // Wake up server with retries
-  let serverOk=false;
+  ss('Acordando servidor...','loading');
   for(let i=0;i<5;i++){
-    try{
-      const w=await fetch('/data',{signal:AbortSignal.timeout(8000)});
-      if(w.status!==403){serverOk=true;break;}
-    }catch(e){}
+    try{const w=await fetch('/data',{signal:AbortSignal.timeout(8000)});if(w.status!==403)break;}catch(e){}
     await new Promise(r=>setTimeout(r,3000));
     setProgress(10+i*8);
   }
-
   setProgress(50);
-  ss('- Enviando arquivo... aguarda, pode levar 1-2 minutos.','loading');
-
-  const fd=new FormData();
-  fd.append('file',f);
-
+  ss('Processando arquivo... aguarda ate 2 minutos.','loading');
+  const fd=new FormData();fd.append('file',f);
   try{
-    const r=await fetch('/upload',{
-      method:'POST',
-      headers:{'X-API-Key':'zagonel2026'},
-      body:fd,
-      signal:AbortSignal.timeout(240000)
-    });
+    const r=await fetch('/upload',{method:'POST',headers:{'X-API-Key':'zagonel2026'},body:fd,signal:AbortSignal.timeout(240000)});
     setProgress(90);
-    const txt=await r.text();
-    let d;
-    try{d=JSON.parse(txt);}
-    catch(e){
-      ss('- Servidor ainda processando - aguarda 30 segundos e tenta novamente.','err');
-      document.getElementById('btn').disabled=false;
-      return;
-    }
+    const txt=await r.text();let d;
+    try{d=JSON.parse(txt);}catch(e){ss('Servidor ainda processando. Tenta novamente em 30 segundos.','err');document.getElementById('btn').disabled=false;return;}
     if(d.success){
       setProgress(100);
-      ss('✅ Dashboard atualizado! Dias: '+d.days.join(', '),'ok');
-      if(d.data) sessionStorage.setItem('freshData', JSON.stringify(d.data));
+      ss('Dashboard atualizado! Dias: '+d.days.join(', '),'ok');
+      if(d.data) sessionStorage.setItem('freshData',JSON.stringify(d.data));
       setTimeout(()=>window.location.href='/',2500);
     }else{
-      ss('❌ Erro: '+d.error,'err');
+      ss('Erro: '+d.error,'err');
       document.getElementById('btn').disabled=false;
     }
   }catch(e){
-    if(e.name==='TimeoutError'||e.name==='AbortError'){
-      ss('- O arquivo demorou demais. Tenta enviar separado por dia.','err');
-    }else{
-      ss('❌ Erro de conexão: '+e.message+'. Tenta novamente.','err');
-    }
+    ss('Erro de conexao. Tenta novamente.','err');
     document.getElementById('btn').disabled=false;
   }
 }
 </script></div></body></html>'''
-
-@app.route('/config', methods=['GET'])
-def get_config():
-    return jsonify(load_config())
-
-@app.route('/config', methods=['POST'])
-def set_config():
-    API_KEY = os.environ.get('API_KEY', 'zagonel2026')
-    if request.headers.get('X-API-Key') != API_KEY:
-        return jsonify({"error": "Unauthorized"}), 401
-    cfg = request.json
-    if not cfg:
-        return jsonify({"error": "No data"}), 400
-    save_config(cfg)
-    return jsonify({"success": True})
 
 @app.route('/upload', methods=['POST'])
 def upload():
@@ -367,36 +310,29 @@ def upload():
         return jsonify({"error": "Unauthorized"}), 401
     if 'file' not in request.files:
         return jsonify({"error": "Nenhum arquivo enviado"}), 400
-
     file = request.files['file']
     tmp_path = f'/tmp/upload_{file.filename}'
     file.save(tmp_path)
-
     try:
-        # Read Excel ONCE
         df_raw = pd.read_excel(tmp_path)
         df_raw['_date'] = pd.to_datetime(df_raw['Data inicial'], dayfirst=True).dt.date
         unique_dates = sorted(df_raw['_date'].unique())
-
         new_days_data = {}
         for d in unique_dates:
             label = f"{d.day:02d}/{d.month:02d}"
             df_day = df_raw[df_raw['_date'] == d].copy()
-
             insp = df_day[df_day['Item']=='Inspetor Responsável'][['Código da avaliação','Resposta']].rename(columns={'Resposta':'Inspetor'})
             insp['Inspetor'] = insp['Inspetor'].str.strip()
             insp['Inspetor'] = insp['Inspetor'].str.replace(r'^Outro.*','Yenire',regex=True)
             insp['Inspetor'] = insp['Inspetor'].str.replace('Yenire Marquez','Yenire',regex=False)
             insp['Inspetor'] = insp['Inspetor'].str.replace(r'^Andris$','Andris Antonio Rivero Romero',regex=True)
-
             linha = df_day[df_day['Item']=='Linha de Montagem'][['Código da avaliação','Resposta']].rename(columns={'Resposta':'Linha'})
             aprov = df_day[df_day['Item']=='Aprovação da Peça'].copy()
             aprov['Produto'] = aprov['Tipo de Unidade'].str.replace(r'\s*-\s*PZO$','',regex=True).str.strip()
             aprov = aprov.merge(insp, on='Código da avaliação', how='left')
             aprov = aprov.merge(linha, on='Código da avaliação', how='left')
             aprov['Linha'] = aprov['Linha'].fillna('')
-            aprov['Produto_Linha'] = aprov.apply(lambda r: f"{r['Produto']} - {r['Linha']}" if r['Linha'] else r['Produto'], axis=1)
-
+            aprov['Produto_Linha'] = aprov.apply(lambda r: f"{r['Produto']} — {r['Linha']}" if r['Linha'] else r['Produto'], axis=1)
             by_pl = aprov.groupby(['Inspetor','Produto_Linha','Produto','Linha','Resposta']).size().unstack(fill_value=0).reset_index()
             if 'Sim' not in by_pl.columns: by_pl['Sim'] = 0
             if 'Não' not in by_pl.columns: by_pl['Não'] = 0
@@ -404,96 +340,35 @@ def upload():
             by_pl['Meta'] = by_pl.apply(lambda r: get_meta(r['Inspetor'],r['Produto'],r['Linha']), axis=1)
             by_pl['Pct'] = (by_pl['Total']/by_pl['Meta']).round(4)
             by_pl['Status'] = by_pl['Pct'].apply(get_status)
-
             if len(by_pl) > 0:
                 new_days_data[label] = by_pl
-
         if not new_days_data:
-            return jsonify({"error": "Nenhum dado encontrado no arquivo"}), 400
-
-        # Merge with existing data
+            return jsonify({"error": "Nenhum dado encontrado"}), 400
         stored = load_data() or {"_raw": {}}
         if "_raw" not in stored:
             stored["_raw"] = {}
-
         for label, df in new_days_data.items():
             stored["_raw"][label] = df.to_dict(orient='records')
-
-        # Sort by date
         def sort_key(lbl):
             p = lbl.split('/')
             return (int(p[1]), int(p[0]))
-
         all_dfs = {lbl: pd.DataFrame(recs) for lbl, recs in stored["_raw"].items()}
         all_dfs = dict(sorted(all_dfs.items(), key=lambda x: sort_key(x[0])))
-
         result = build_result(all_dfs)
         result["_raw"] = stored["_raw"]
         save_data(result)
-
-        try: os.remove(tmp_path)
-        except: pass
-
-        return jsonify({
-            "success": True,
-            "days": list(all_dfs.keys()),
-            "message": f"Processado: {list(new_days_data.keys())}",
-            "data": {k: v for k, v in result.items() if k != '_raw'}
-        })
-
+        try:
+            os.remove(tmp_path)
+        except:
+            pass
+        clean = {k: v for k, v in result.items() if k != '_raw'}
+        return jsonify({"success": True, "days": list(all_dfs.keys()), "data": clean})
     except Exception as e:
-        try: os.remove(tmp_path)
-        except: pass
+        try:
+            os.remove(tmp_path)
+        except:
+            pass
         return jsonify({"error": str(e)}), 500
-
-# Auto-restore from GitHub on startup if no local data
-def startup_restore()
-
-# Restore config from GitHub if not local
-def startup_restore_config():
-    if not os.path.exists(CONFIG_FILE):
-        try:
-            raw_url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/config.json'
-            req = urllib.request.Request(raw_url)
-            with urllib.request.urlopen(req, timeout=10) as r:
-                cfg = json.loads(r.read())
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(cfg, f, ensure_ascii=False)
-            print("Config restored from GitHub")
-        except Exception as e:
-            print(f"Config restore failed: {e}")
-
-startup_restore_config():
-    if not os.path.exists(DATA_FILE):
-        print("No local data, restoring from GitHub raw...")
-        try:
-            raw_url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/{GITHUB_FILE}'
-            req = urllib.request.Request(raw_url)
-            with urllib.request.urlopen(req, timeout=15) as r:
-                data = json.loads(r.read())
-            with open(DATA_FILE, 'w') as f:
-                json.dump(data, f, ensure_ascii=False)
-            print(f"Restored {len(data.get('days',[]))} days from GitHub raw")
-        except Exception as e:
-            print(f"Restore failed: {e}")
-
-startup_restore()
-
-# Restore config from GitHub if not local
-def startup_restore_config():
-    if not os.path.exists(CONFIG_FILE):
-        try:
-            raw_url = f'https://raw.githubusercontent.com/{GITHUB_REPO}/main/config.json'
-            req = urllib.request.Request(raw_url)
-            with urllib.request.urlopen(req, timeout=10) as r:
-                cfg = json.loads(r.read())
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(cfg, f, ensure_ascii=False)
-            print("Config restored from GitHub")
-        except Exception as e:
-            print(f"Config restore failed: {e}")
-
-startup_restore_config()
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)))
