@@ -89,7 +89,7 @@ def build_result(days_data):
     return result
 
 # - GitHub -
-GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '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')
+GITHUB_TOKEN = os.environ.get('GITHUB_TOKEN', '')
 GITHUB_REPO  = os.environ.get('GITHUB_REPO', 'BrunoPedrolo/zagonel-kpi')
 GITHUB_FILE  = 'data.json'
 
