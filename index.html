@@ -237,6 +237,41 @@ const TURNOS={'15h00':['Ketlin','Iliane','Andris','Yenire','Marta'],'05h20':['Yo
 const TURNO_COR={'15h00':'#EDE7F6','05h20':'#E3F2FD','07h12':'#FFF8E1'};
 const TURNO_FG={'15h00':'#4527A0','05h20':'#0D47A1','07h12':'#E65100'};
 const AV_COLORS=[['#e8f5e9','#1a6b3a'],['#e3f2fd','#0d47a1'],['#fce4ec','#880e4f'],['#fff3e0','#e65100'],['#f3e5f5','#4a148c'],['#e0f7fa','#006064'],['#f9fbe7','#33691e'],['#ede7f6','#311b92'],['#fff8e1','#f57f17'],['#fbe9e7','#bf360c'],['#e8eaf6','#1a237e'],['#e0f2f1','#004d40'],['#e1f5fe','#01579b'],['#f3e5f5','#6a1b9a']];
+function getEffectiveMeta(nome){
+  const m=CFG.metas&&CFG.metas[nome];
+  if(!m||!m.metaLinha||!m.nLinhas) return null;
+  // Check if valid date
+  if(m.desde){
+    // meta applies from this date onwards - for now apply always
+  }
+  return m.metaLinha * m.nLinhas;
+}
+
+function applyMetaOverride(insp){
+  // Returns a copy of inspetor dias with overridden meta/pct/status
+  const meta=getEffectiveMeta(insp.nome);
+  if(!meta) return insp;
+  const clone=JSON.parse(JSON.stringify(insp));
+  Object.keys(clone.dias).forEach(d=>{
+    if(!clone.dias[d]) return;
+    const dd=clone.dias[d];
+    dd.meta=meta;
+    dd.pct=Math.round(dd.total/meta*1000)/10;
+    dd.status=dd.pct>=CFG.threshSuper?'SUPEROU':dd.pct>=CFG.threshAtinge?'ATINGIU':'NAO_ATINGIU';
+    // Update linhas proportionally
+    if(dd.linhas&&dd.linhas.length){
+      const metaLinha=CFG.metas[insp.nome].metaLinha||72;
+      dd.linhas=dd.linhas.map(l=>({
+        ...l,
+        meta:metaLinha,
+        pct:Math.round(l.total/metaLinha*1000)/10,
+        status:(l.total/metaLinha)>=0.95?'SUPEROU':(l.total/metaLinha)>=0.85?'ATINGIU':'NAO_ATINGIU'
+      }));
+    }
+  });
+  return clone;
+}
+
 const BC=s=>s==='SUPEROU'?'#22B04B':s==='ATINGIU'?'#4CAF50':'#e65100';
 const BCls=s=>s==='SUPEROU'?'bs':s==='ATINGIU'?'ba':s==='NAO_ATINGIU'?'bn':'babs';
 const BTxt=s=>s==='SUPEROU'?'✓ Superou':s==='ATINGIU'?'● Atingiu':s==='NAO_ATINGIU'?'✕ Não atingiu':'Sem dados';
@@ -399,7 +434,7 @@ function toggleInsp(i){document.getElementById('ca').className='fchip';if(selIns
 const filtered=()=>D.inspetores.filter((_,i)=>(selTurno.size===0||selTurno.has(getTurno(D.inspetores[i].nome)))&&(selInsp.size===0||selInsp.has(i)));
 
 function calcTotals(group,d){
-  const pr=group.filter(x=>x.dias[d]);
+  const pr=group.filter(x=>x.dias[d]).map(x=>applyMetaOverride(x));
   const tot=pr.reduce((a,x)=>a+x.dias[d].total,0);
   const met=pr.reduce((a,x)=>a+x.dias[d].meta,0);
   const pct=met?Math.round(tot/met*1000)/10:0;
@@ -439,7 +474,8 @@ function renderCards(){
   const f=filtered();
   if(!f.length){el.innerHTML=`<div class="cards-grid"><div style="grid-column:1/-1;text-align:center;padding:40px;color:#5a8a60">Nenhum colaborador encontrado.</div></div>`;return;}
   let h='<div class="cards-grid">';
-  f.forEach((insp,idx)=>{
+  f.forEach((inspRaw,idx)=>{
+    const insp=applyMetaOverride(inspRaw);
     const [abg,afg]=AV_COLORS[idx%AV_COLORS.length];
     const turno=getTurno(insp.nome);
     const tBg=TURNO_COR[turno]||'#f5f5f5';
