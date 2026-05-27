@@ -72,6 +72,27 @@ body{background:#f4f6f4;color:#1a2e1a;font-family:-apple-system,BlinkMacSystemFo
 .gchart{background:#fff;border:1.5px solid #d0e8d0;border-radius:10px;overflow:hidden;margin-bottom:12px}
 .gchart-h{padding:10px 14px;border-bottom:1px solid #e8f5e9;font-size:12px;font-weight:600;color:#1a2e1a;display:flex;align-items:center;justify-content:space-between}
 .gchart-b{padding:14px}
+.date-selector{background:#fff;border:1.5px solid #d0e8d0;border-radius:var(--border-radius-lg);padding:14px 16px;display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;margin-bottom:14px}
+.cal-container{display:flex;flex-direction:column;gap:8px}
+.cal-nav{display:flex;align-items:center;gap:6px}
+.cal-nav button{width:26px;height:26px;border-radius:6px;border:0.5px solid #d0e8d0;background:#fff;cursor:pointer;font-size:16px;display:flex;align-items:center;justify-content:center;color:#3a6e3a;line-height:1}
+.cal-month-lbl{font-size:13px;font-weight:500;color:var(--color-text-primary);min-width:110px;text-align:center}
+.cal-grid{display:grid;grid-template-columns:repeat(7,32px);gap:2px}
+.cal-lbl{font-size:10px;color:var(--color-text-secondary);text-align:center;padding:2px 0;font-weight:500}
+.cday{width:32px;height:30px;font-size:12px;border-radius:6px;display:flex;align-items:center;justify-content:center;cursor:default;color:var(--color-text-secondary)}
+.cday.has{background:#fff;border:1px solid #d0e8d0;color:#1a2e1a;font-weight:500;cursor:pointer}
+.cday.has:hover{border-color:#22B04B;color:#22B04B;background:#f0faf0}
+.cday.sel{background:#22B04B!important;color:#fff!important;border:1px solid #22B04B!important;font-weight:500}
+.cday.wknd{opacity:.25}
+.cal-legend{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.leg{display:flex;align-items:center;gap:4px;font-size:10px;color:var(--color-text-secondary)}
+.leg-dot{width:12px;height:12px;border-radius:3px;flex-shrink:0}
+.quick-filters{display:flex;flex-direction:column;gap:5px;padding-left:16px;border-left:1px solid #e8f5e9;min-width:160px}
+.qf-lbl{font-size:10px;color:var(--color-text-secondary);text-transform:uppercase;letter-spacing:.05em;margin-bottom:2px}
+.qf-btn{padding:6px 10px;font-size:12px;border-radius:6px;border:0.5px solid #d0e8d0;background:#fff;color:#3a6e3a;cursor:pointer;text-align:left;transition:all .15s;white-space:nowrap;width:100%}
+.qf-btn:hover{background:#f0faf0;border-color:#22B04B}
+.qf-btn.qf-active{background:#e8f5e9;border-color:#22B04B;color:#1a6b3a;font-weight:500}
+.sel-badge{display:inline-flex;align-items:center;gap:5px;background:#e8f5e9;color:#1a6b3a;border:1px solid #a5d6a7;padding:4px 10px;border-radius:20px;font-size:12px;font-weight:500}
 .prod-table{width:100%;border-collapse:collapse;font-size:13px;background:#fff;border-radius:10px;overflow:hidden;border:1.5px solid #d0e8d0}
 .prod-table th{text-align:left;font-size:10px;font-weight:700;color:#5a8a60;padding:8px 12px;background:#f0faf0;border-bottom:1px solid #d0e8d0;text-transform:uppercase;letter-spacing:.05em}
 .prod-table th.r,.prod-table td.r{text-align:right}
@@ -318,6 +339,7 @@ async function loadData(){
       sessionStorage.removeItem('freshData');
       D=JSON.parse(fresh);
       day=D.days[D.days.length-1];
+    const _lp=day.split('/');calMonth=parseInt(_lp[1]);calYear=parseInt(_lp[2]||'2026');
       populateInspLogin();buildUI();
       return;
     }
@@ -391,9 +413,27 @@ function setMainTab(t){
 }
 
 // ── DASHBOARD ──
+let calMonth=null, calYear=null;
+
 function buildDashboard(){
+  const now=new Date();
+  if(!calMonth){calMonth=now.getMonth()+1; calYear=now.getFullYear();}
   document.getElementById('p-dashboard').innerHTML=`
-    <div class="day-bar" id="day-toggle"></div>
+    <div class="date-selector">
+      <div class="cal-container" id="cal-container"></div>
+      <div class="quick-filters">
+        <div class="qf-lbl">Atalhos</div>
+        <button class="qf-btn" id="qf-hoje" onclick="quickSelect('hoje')">Hoje</button>
+        <button class="qf-btn" id="qf-ontem" onclick="quickSelect('ontem')">Ontem</button>
+        <button class="qf-btn" id="qf-semana" onclick="quickSelect('semana')">Esta semana</button>
+        <button class="qf-btn" id="qf-mes" onclick="quickSelect('mes')">Acumulado do mês</button>
+        <button class="qf-btn" id="qf-geral" onclick="quickSelect('geral')">Geral (todos os dias)</button>
+        <div style="margin-top:8px;padding-top:8px;border-top:0.5px solid #e8f5e9">
+          <div class="qf-lbl" style="margin-bottom:5px">Visualizando</div>
+          <div class="sel-badge" id="sel-badge-day">---</div>
+        </div>
+      </div>
+    </div>
     <div class="filter-bar">
       <div class="filter-row"><span class="filter-lbl">Turno:</span><div id="turno-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div></div>
       <div class="filter-row"><span class="filter-lbl">Colaborador:</span><div id="insp-chips" style="display:flex;flex-wrap:wrap;gap:6px"></div></div>
@@ -406,17 +446,113 @@ function buildDashboard(){
     <div id="p-inspetores" class="panel active"></div>
     <div id="p-produtos" class="panel"></div>
   `;
-  buildDayToggle();buildChips();render();
+  renderCalendar();buildChips();render();
 }
 
-function setDay(d){day=d;document.querySelectorAll('.dbtn').forEach(b=>b.classList.toggle('active',b.dataset.d===d));render();}
+function renderCalendar(){
+  const container=document.getElementById('cal-container');
+  if(!container)return;
+  const months=['Janeiro','Fevereiro','Março','Abril','Maio','Junho','Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const daysInMonth=(m,y)=>new Date(y,m,0).getDate();
+  const firstDay=(m,y)=>new Date(y,m-1,1).getDay();
+  const dim=daysInMonth(calMonth,calYear);
+  const fd=firstDay(calMonth,calYear);
+  // Get days with data for this month
+  const monthDays=D.days.filter(d=>{
+    const p=d.split('/');
+    return parseInt(p[1])===calMonth;
+  }).map(d=>parseInt(d.split('/')[0]));
+  let html=`<div class="cal-nav">
+    <button onclick="prevMonth()">‹</button>
+    <div class="cal-month-lbl">${months[calMonth-1]} ${calYear}</div>
+    <button onclick="nextMonth()">›</button>
+  </div>
+  <div class="cal-grid">
+    <div class="cal-lbl">D</div><div class="cal-lbl">S</div><div class="cal-lbl">T</div>
+    <div class="cal-lbl">Q</div><div class="cal-lbl">Q</div><div class="cal-lbl">S</div>
+    <div class="cal-lbl">S</div>`;
+  // Empty cells before first day
+  for(let i=0;i<fd;i++) html+=`<div class="cday"></div>`;
+  // Days
+  for(let d=1;d<=dim;d++){
+    const hasData=monthDays.includes(d);
+    const dayStr=`${String(d).padStart(2,'0')}/${String(calMonth).padStart(2,'0')}`;
+    const isSel=day===dayStr;
+    const dow=(fd+d-1)%7;
+    const isWknd=dow===0||dow===6;
+    let cls='cday';
+    if(isSel) cls+=' sel';
+    else if(hasData) cls+=' has';
+    else if(isWknd) cls+=' wknd';
+    const onclick=hasData&&!isSel?`onclick="selectDay('${dayStr}')"`:''
+    html+=`<div class="${cls}" ${onclick}>${d}</div>`;
+  }
+  html+=`</div>
+  <div class="cal-legend">
+    <div class="leg"><div class="leg-dot" style="background:#fff;border:1px solid #d0e8d0"></div>com dados</div>
+    <div class="leg"><div class="leg-dot" style="background:#22B04B"></div>selecionado</div>
+  </div>`;
+  container.innerHTML=html;
+  // Update badge
+  const badge=document.getElementById('sel-badge-day');
+  if(badge){
+    if(day==='comp') badge.textContent='Geral (todos os dias)';
+    else badge.textContent=day;
+  }
+  // Update quick filter active state
+  updateQuickBtns();
+}
+
+function updateQuickBtns(){
+  const lastDay=D.days[D.days.length-1];
+  const prevDay=D.days[D.days.length-2]||'';
+  document.getElementById('qf-hoje')?.classList.toggle('qf-active',day===lastDay);
+  document.getElementById('qf-ontem')?.classList.toggle('qf-active',day===prevDay);
+  document.getElementById('qf-geral')?.classList.toggle('qf-active',day==='comp');
+  document.getElementById('qf-mes')?.classList.toggle('qf-active',day==='mes');
+}
+
+function selectDay(d){
+  day=d;
+  // Navigate calendar to selected month
+  const p=d.split('/');
+  calMonth=parseInt(p[1]);
+  renderCalendar();
+  render();
+}
+
+function prevMonth(){
+  calMonth--;
+  if(calMonth<1){calMonth=12;calYear--;}
+  renderCalendar();
+}
+
+function nextMonth(){
+  calMonth++;
+  if(calMonth>12){calMonth=1;calYear++;}
+  renderCalendar();
+}
+
+function quickSelect(type){
+  const lastDay=D.days[D.days.length-1];
+  const prevDay=D.days[D.days.length-2]||lastDay;
+  if(type==='hoje'){day=lastDay;}
+  else if(type==='ontem'){day=prevDay;}
+  else if(type==='geral'){day='comp';}
+  else if(type==='mes'||type==='semana'){day='comp';} // use comp for now
+  // Navigate to that month
+  if(day!=='comp'&&day!=='mes'){
+    const p=day.split('/');
+    calMonth=parseInt(p[1]);
+  }
+  renderCalendar();
+  render();
+}
+
+function setDay(d){day=d;renderCalendar();render();}
 function setSubTab(t){subTab=t;document.querySelectorAll('#p-dashboard .main-tab').forEach((b,i)=>b.classList.toggle('active',['inspetores','produtos'][i]===t));document.querySelectorAll('#p-inspetores,#p-produtos').forEach((p,i)=>p.classList.toggle('active',['inspetores','produtos'][i]===t));render();}
 
-function buildDayToggle(){
-  document.getElementById('day-toggle').innerHTML=
-    D.days.map((d,i)=>`<button class="dbtn${i===D.days.length-1?' active':''}" data-d="${d}" onclick="setDay('${d}')">${d}</button>`).join('')+
-    `<button class="dbtn" data-d="comp" onclick="setDay('comp')">Geral</button>`;
-}
+function buildDayToggle(){renderCalendar();}
 
 function buildChips(){
   document.getElementById('turno-chips').innerHTML=
