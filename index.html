@@ -466,6 +466,9 @@ function linhasHtml(linhas){
 
 function getJust(nome,d){
   const k=`${nome}|${d||day}`;
+  // Check server config first (authoritative across devices)
+  if(CFG.justificativas&&CFG.justificativas[k]) return CFG.justificativas[k];
+  // Fallback to localStorage
   try{const s=localStorage.getItem('just_'+k);return s?JSON.parse(s):null;}catch(e){return null;}
 }
 
@@ -971,17 +974,27 @@ function buildAdminJust(){
 
   // Collect all justificativas from localStorage
   const all=[];
+  // Load from server config (authoritative)
+  try{
+    const justs=CFG.justificativas||{};
+    Object.entries(justs).forEach(([k,j])=>{
+      const parts=k.split('|');
+      all.push({nome:parts[0],dia:parts[1],motivo:j.motivo,obs:j.obs||'',ts:j.ts||'',key:k});
+    });
+  }catch(e){}
+  // Also check localStorage for any not yet synced
   try{
     for(let i=0;i<localStorage.length;i++){
-      const k=localStorage.key(i);
-      if(k&&k.startsWith('just_')){
-        const raw=localStorage.getItem(k);
-        if(raw){
-          const j=JSON.parse(raw);
-          const parts=k.replace('just_','').split('|');
-          const nome=parts[0];
-          const dia=parts[1];
-          all.push({nome,dia,motivo:j.motivo,obs:j.obs||'',ts:j.ts||'',key:k});
+      const lk=localStorage.key(i);
+      if(lk&&lk.startsWith('just_')){
+        const k=lk.replace('just_','');
+        if(!(CFG.justificativas&&CFG.justificativas[k])){
+          const raw=localStorage.getItem(lk);
+          if(raw){
+            const j=JSON.parse(raw);
+            const parts=k.split('|');
+            all.push({nome:parts[0],dia:parts[1],motivo:j.motivo,obs:j.obs||'',ts:j.ts||'',key:k});
+          }
         }
       }
     }
@@ -1053,16 +1066,19 @@ function saveAdminJust(key,idx){
   const motivo=document.getElementById('jae-motivo-'+idx)?.value;
   const obs=document.getElementById('jae-obs-'+idx)?.value||'';
   if(!motivo)return;
-  try{
-    const existing=JSON.parse(localStorage.getItem(key)||'{}');
-    localStorage.setItem(key,JSON.stringify({...existing,motivo,obs,editadoEm:new Date().toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit'})}));
-  }catch(e){}
+  const ts=new Date().toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit'});
+  if(!CFG.justificativas) CFG.justificativas={};
+  CFG.justificativas[key]={motivo,obs,ts};
+  saveCfg();
+  try{localStorage.setItem('just_'+key,JSON.stringify({motivo,obs,ts}));}catch(e){}
   buildAdminJust();render();renderJustificativas();
   alert('Justificativa atualizada!');
 }
 function deleteAdminJust(key,idx){
   if(!confirm('Tem certeza que deseja apagar esta justificativa?'))return;
-  try{localStorage.removeItem(key);}catch(e){}
+  if(CFG.justificativas) delete CFG.justificativas[key];
+  saveCfg();
+  try{localStorage.removeItem('just_'+key);}catch(e){}
   buildAdminJust();render();renderJustificativas();
 }
 
@@ -1135,9 +1151,15 @@ function salvarJust(nome,d){
   const motivo=document.getElementById('just-motivo').value;
   const obs=document.getElementById('just-obs').value;
   if(!motivo){alert('Seleciona um motivo!');return;}
-  const key='just_'+nome+'|'+d;
+  const k=`${nome}|${d}`;
   const ts=new Date().toLocaleString('pt-BR',{hour:'2-digit',minute:'2-digit'});
-  try{localStorage.setItem(key,JSON.stringify({motivo,obs,ts}));}catch(e){};
+  const just={motivo,obs,ts};
+  // Save to server config (persists across devices)
+  if(!CFG.justificativas) CFG.justificativas={};
+  CFG.justificativas[k]=just;
+  saveCfg();
+  // Also save to localStorage as cache
+  try{localStorage.setItem('just_'+k,JSON.stringify(just));}catch(e){}
   closeJust();render();renderJustificativas();
   alert('Justificativa salva!');
 }
